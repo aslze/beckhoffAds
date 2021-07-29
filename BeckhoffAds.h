@@ -1,3 +1,5 @@
+// Copyright(c) 2019-2021 aslze
+
 #ifndef ADSLIB_H
 #define ADSLIB_H
 

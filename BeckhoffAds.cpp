@@ -1,3 +1,5 @@
+// Copyright(c) 2019-2021 aslze
+
 #include "BeckhoffAds.h"
 #include <asl/StreamBuffer.h>
 #include <asl/Thread.h>
@@ -216,6 +218,8 @@ asl::Array<byte> BeckhoffAds::readPacket()
 	uint16_t reserved = 0;
 	uint32_t totalLen = 0;
 	Array<byte> head = _socket.read(6);
+	if (head.length() < 6)
+		return Array<byte>();
 	StreamBufferReader reader(head);
 	reader >> reserved >> totalLen;
 	if (_socket.error() || reserved != 0 || totalLen > 5000)
