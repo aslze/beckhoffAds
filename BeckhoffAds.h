@@ -30,7 +30,7 @@ public:
 		NetId(): data(6) { }
 		NetId(const char* s);
 		NetId(const asl::String& s);
-		asl::Array<byte> data;
+		asl::ByteArray data;
 	};
 
 	enum NotificationMode
@@ -63,52 +63,52 @@ public:
 	*/
 	void setTarget(const NetId& net, int port);
 	
-	//bool writePacket(const asl::Array<byte>& data);
+	//bool writePacket(const asl::ByteArray& data);
 
 	/**
 	Sends an ADS  packet with the given command ID and data
 	*/
-	bool send(int command, const asl::Array<byte>& data);
+	bool send(int command, const asl::ByteArray& data);
 
 	/**
 	Reads an incoming ADS packet
 	*/
-	asl::Array<byte> readPacket();
+	asl::ByteArray readPacket();
 
-	asl::Array<byte> getResponse();
+	asl::ByteArray getResponse();
 
 	/**
 	Writes data to a given index group and offset
 	*/
-	bool write(unsigned group, unsigned offset, const asl::Array<byte>& data);
+	bool write(unsigned group, unsigned offset, const asl::ByteArray& data);
 
 	/**
 	Reads data from a given index group and offset, and given byte length
 	*/
-	asl::Array<byte> read(unsigned group, unsigned offset, int length);
+	asl::ByteArray read(unsigned group, unsigned offset, int length);
 
 	/**
 	Reads and writes data at a given index group and offset
 	*/
-	asl::Array<byte> readWrite(unsigned group, unsigned offset, int length, const asl::Array<byte>& data);
+	asl::ByteArray readWrite(unsigned group, unsigned offset, int length, const asl::ByteArray& data);
 
 	/**
 	Enables notifications for an index group and offset and returns a handle, times are in seconds
 	*/
 	unsigned addNotification(unsigned group, unsigned offset, int length, NotificationMode mode, double maxt, double cycle,
-		asl::Function<void, const asl::Array<byte>&> f);
+		asl::Function<void, const asl::ByteArray&> f);
 
 	/**
 	Enables notifications for a variable given its handle and returns a notification handle, times are in seconds
 	*/
 	unsigned addNotification(unsigned handle, int length, NotificationMode mode, double maxt, double cycle,
-		asl::Function<void, const asl::Array<byte>&> f);
+		asl::Function<void, const asl::ByteArray&> f);
 
 	/**
 	Enables notifications for a variable given its name and returns a notification handle, times are in seconds
 	*/
 	unsigned addNotification(const asl::String& name, int length, NotificationMode mode, double maxt, double cycle,
-		asl::Function<void, const asl::Array<byte>&> f);
+		asl::Function<void, const asl::ByteArray&> f);
 
 	/**
 	Disables notifications for previously returned notification handle
@@ -133,17 +133,17 @@ public:
 	/**
 	Reads a named variable as data
 	*/
-	asl::Array<byte> readValue(const asl::String& name, int n);
+	asl::ByteArray readValue(const asl::String& name, int n);
 
 	/**
 	Writes a named variable as data
 	*/
-	bool writeValue(const asl::String& name, const asl::Array<byte>& data);
+	bool writeValue(const asl::String& name, const asl::ByteArray& data);
 
 	/**
 	Reads a variable given a handle as data
 	*/
-	asl::Array<byte> readValue(unsigned handle, int n);
+	asl::ByteArray readValue(unsigned handle, int n);
 
 	/**
 	Reads a variable given a handle as a specific type
@@ -151,7 +151,7 @@ public:
 	template<class T>
 	T readValue(unsigned handle)
 	{
-		asl::Array<byte> response = readValue(handle, sizeof(T));
+		asl::ByteArray response = readValue(handle, sizeof(T));
 		asl::StreamBufferReader buffer(response);
 		T value = buffer.read<T>();
 		return value;
@@ -163,7 +163,7 @@ public:
 	template<class T>
 	T readValue(const char* name)
 	{
-		asl::Array<byte> response = readValue(String(name), sizeof(T));
+		asl::ByteArray response = readValue(String(name), sizeof(T));
 		asl::StreamBufferReader buffer(response);
 		T value = buffer.read<T>();
 		return value;
@@ -185,7 +185,7 @@ public:
 	{
 		struct NotFunctor {
 			asl::Function<void, T> _f;
-			void operator()(const asl::Array<byte>& data) { _f(asl::StreamBufferReader(data).read<T>()); }
+			void operator()(const asl::ByteArray& data) { _f(asl::StreamBufferReader(data).read<T>()); }
 			NotFunctor(const asl::Function<void, T>& f) : _f(f) {}
 		} ftor(f);
 		return addNotification(name, sizeof(T), mode, maxt, cycle, ftor);
@@ -194,7 +194,7 @@ public:
 
 protected:
 
-	void processNotification(const asl::Array<byte>& data);
+	void processNotification(const asl::ByteArray& data);
 
 	void receiveLoop();
 
@@ -213,11 +213,11 @@ protected:
 	asl::Array<unsigned> _handles;
 	asl::Array<unsigned> _notifications;
 	asl::Dic<unsigned> _namedHandles;
-	asl::Map<asl::ULong, asl::Array<byte> > _responses;
-	asl::Array<byte> _response;
+	asl::Map<asl::ULong, asl::ByteArray> _responses;
+	asl::ByteArray _response;
 	BeckhoffThread* _thread;
 	asl::ULong _lastRequestId;
-	asl::Map<unsigned, asl::Function<void, const asl::Array<byte>&>> _callbacks;
+	asl::Map<unsigned, asl::Function<void, const asl::ByteArray&> > _callbacks;
 };
 
 

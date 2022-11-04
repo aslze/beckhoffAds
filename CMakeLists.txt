@@ -2,24 +2,29 @@ cmake_minimum_required(VERSION 3.0)
 
 project(beckhoff-ads)
 
-set(TARGET ads)
+option(ADS_SAMPLES "Build samples")
 
-find_package(ASL)
+set(TARGET beckhoffAds)
 
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-
-set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+if(NOT TARGET asls)
+	find_package(ASL)
+endif()
 
 set(CMAKE_DEBUG_POSTFIX "d")
 
 set(SRC
 	BeckhoffAds.h
 	BeckhoffAds.cpp
-	main.cpp
 )
 
-add_executable(${TARGET} ${SRC})
+add_library(${TARGET} STATIC ${SRC})
 
 target_link_libraries(${TARGET} asls)
+target_include_directories(${TARGET} PUBLIC .)
+
+if(ADS_SAMPLES)
+	set(TARGET ads-demo)
+	add_executable(${TARGET} main.cpp)
+	target_link_libraries(${TARGET} beckhoffAds asls)
+endif()
+
