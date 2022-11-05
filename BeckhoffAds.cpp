@@ -2,7 +2,7 @@
 
 // https://infosys.beckhoff.com/
 
-//#define NOTIF_THREAD // notifications start a thread each
+#define NOTIF_THREAD // notifications start a thread each
 
 // could have a thread with a queue of notifications to call in sequence, and semaphore to trigger
 
@@ -100,6 +100,7 @@ BeckhoffAds::BeckhoffAds()
 	_sourcePort = (uint16_t)34000;
 	_invokeId = 0;
 	_thread = 0;
+	_lastError = 0;
 }
 
 BeckhoffAds::~BeckhoffAds()
@@ -249,6 +250,7 @@ asl::ByteArray BeckhoffAds::readPacket()
 	if (_socket.error() || reserved != 0 || totalLen > 5000)
 	{
 		printf("bad ADS response (len=%i reserved=%i, read=%i)\n", totalLen, reserved, head.length());
+		_sem.post();
 		return asl::ByteArray();
 	}
 	ByteArray          packet = _socket.read(totalLen);
@@ -259,8 +261,11 @@ asl::ByteArray BeckhoffAds::readPacket()
 	buffer >> commandId >> flags >> len >> error >> invokeId;
 	if (error != 0)
 	{
+		_lastError = error;
 		printf("bad ADS message error: %i len %i cmd %x \n", error, len, commandId);
-		return asl::ByteArray(8);
+		//_responses[pack(commandId, invokeId)] = asl::ByteArray();
+		_sem.post();
+		return asl::ByteArray(); // 8?
 	}
 
 	ByteArray data = buffer.read(len);
@@ -268,6 +273,7 @@ asl::ByteArray BeckhoffAds::readPacket()
 	if ((flags & 1) == 0 && commandId != ADSCOM_DEVICENOTIF)
 	{
 		printf("received request, not response (cmd: %u)\n", commandId);
+		_sem.post();
 		return asl::ByteArray();
 	}
 
@@ -391,11 +397,11 @@ asl::ByteArray BeckhoffAds::readWrite(unsigned group, unsigned offset, int lengt
 // https://infosys.beckhoff.com/english.php?content=../content/1033/tcadscommon/12440296075.html&id=
 // here it says unit is 1 ms ?!
 
-// convert seconds to internal ADS time (milliseconds?)
+// convert seconds to internal ADS time
 
 inline unsigned toBTime(double t)
 {
-	return unsigned(t / 0.001); // (100e-9 for 100ns)
+	return unsigned(t / 100e-9); // for 100ns)
 }
 
 unsigned BeckhoffAds::addNotification(unsigned group, unsigned offset, int length, NotificationMode mode, double maxt,

@@ -198,13 +198,15 @@ public:
 	 * \param name variable name
 	 * \param f functor to be called with the new value
 	 * \param interval variable checked internally every t seconds
-	 * \param maxt function called every maxt seconds even if not changed
+	 * \param maxt events accumulate up to maxt seconds and are sent together (apparently)
 	 */
 	template<class T>
-	unsigned onChange(const asl::String& name, const asl::Function<void, T>& f, double interval = 0.01, double maxt = 10)
+	unsigned onChange(const asl::String& name, const asl::Function<void, T>& f, double interval = 0.01, double maxt = 0.01)
 	{
 		return addNotification(name, NOTIF_CHANGE, maxt, interval, f);
 	}
+
+	int lastError() const { return _lastError; }
 
 protected:
 	void processNotification(const asl::ByteArray& data);
@@ -223,6 +225,7 @@ protected:
 	unsigned                                                       _invokeId;
 	int                                                            _sourcePort;
 	int                                                            _targetPort;
+	int                                                            _lastError;
 	asl::Array<unsigned>                                           _handles;
 	asl::Array<unsigned>                                           _notifications;
 	asl::Dic<unsigned>                                             _namedHandles;
