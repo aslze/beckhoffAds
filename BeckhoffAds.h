@@ -27,7 +27,7 @@ public:
 
 	struct NetId
 	{
-		NetId(): data(6) { }
+		NetId() : data(6) {}
 		NetId(const char* s);
 		NetId(const asl::String& s);
 		asl::ByteArray data;
@@ -53,7 +53,7 @@ public:
 	void disconnect();
 
 	bool checkConnection();
-	
+
 	/**
 	Sets the NetID and port of the source for communications
 	*/
@@ -62,8 +62,8 @@ public:
 	Sets the NetID and port of the target for communications
 	*/
 	void setTarget(const NetId& net, int port);
-	
-	//bool writePacket(const asl::ByteArray& data);
+
+	// bool writePacket(const asl::ByteArray& data);
 
 	/**
 	Sends an ADS  packet with the given command ID and data
@@ -95,20 +95,20 @@ public:
 	/**
 	Enables notifications for an index group and offset and returns a handle, times are in seconds
 	*/
-	unsigned addNotification(unsigned group, unsigned offset, int length, NotificationMode mode, double maxt, double cycle,
-		asl::Function<void, const asl::ByteArray&> f);
+	unsigned addNotification(unsigned group, unsigned offset, int length, NotificationMode mode, double maxt,
+	                         double cycle, asl::Function<void, const asl::ByteArray&> f);
 
 	/**
 	Enables notifications for a variable given its handle and returns a notification handle, times are in seconds
 	*/
 	unsigned addNotification(unsigned handle, int length, NotificationMode mode, double maxt, double cycle,
-		asl::Function<void, const asl::ByteArray&> f);
+	                         asl::Function<void, const asl::ByteArray&> f);
 
 	/**
 	Enables notifications for a variable given its name and returns a notification handle, times are in seconds
 	*/
 	unsigned addNotification(const asl::String& name, int length, NotificationMode mode, double maxt, double cycle,
-		asl::Function<void, const asl::ByteArray&> f);
+	                         asl::Function<void, const asl::ByteArray&> f);
 
 	/**
 	Disables notifications for previously returned notification handle
@@ -151,9 +151,9 @@ public:
 	template<class T>
 	T readValue(unsigned handle)
 	{
-		asl::ByteArray response = readValue(handle, sizeof(T));
+		asl::ByteArray          response = readValue(handle, sizeof(T));
 		asl::StreamBufferReader buffer(response);
-		T value = buffer.read<T>();
+		T                       value = buffer.read<T>();
 		return value;
 	}
 
@@ -163,9 +163,9 @@ public:
 	template<class T>
 	T readValue(const char* name)
 	{
-		asl::ByteArray response = readValue(String(name), sizeof(T));
+		asl::ByteArray          response = readValue(String(name), sizeof(T));
 		asl::StreamBufferReader buffer(response);
-		T value = buffer.read<T>();
+		T                       value = buffer.read<T>();
 		return value;
 	}
 
@@ -179,47 +179,58 @@ public:
 		buffer << value;
 		return writeValue(String(name), *buffer);
 	}
-	
+
 	template<class T>
-	unsigned addNotification(const asl::String& name, NotificationMode mode, double maxt, double cycle, asl::Function<void, T> f)
+	unsigned addNotification(const asl::String& name, NotificationMode mode, double maxt, double cycle,
+	                         const asl::Function<void, T>& f)
 	{
-		struct NotFunctor {
+		struct NotFunctor
+		{
 			asl::Function<void, T> _f;
-			void operator()(const asl::ByteArray& data) { _f(asl::StreamBufferReader(data).read<T>()); }
+			void                   operator()(const asl::ByteArray& data) { _f(asl::StreamBufferReader(data).read<T>()); }
 			NotFunctor(const asl::Function<void, T>& f) : _f(f) {}
 		} ftor(f);
 		return addNotification(name, sizeof(T), mode, maxt, cycle, ftor);
 	}
 
+	/**
+	 * Sets a function to be called when a variable by name changes value.
+	 * \param name variable name
+	 * \param f functor to be called with the new value
+	 * \param interval variable checked internally every t seconds
+	 * \param maxt function called every maxt seconds even if not changed
+	 */
+	template<class T>
+	unsigned onChange(const asl::String& name, const asl::Function<void, T>& f, double interval = 0.01, double maxt = 10)
+	{
+		return addNotification(name, NOTIF_CHANGE, maxt, interval, f);
+	}
 
 protected:
-
 	void processNotification(const asl::ByteArray& data);
 
 	void receiveLoop();
 
 protected:
-	asl::Socket _socket;
-	asl::String _host;
-	asl::Mutex _mutex;
-	asl::Semaphore _sem;
-	bool _connected;
-	bool _error;
-	NetId _source;
-	NetId _target;
-	unsigned _invokeId;
-	int _sourcePort;
-	int _targetPort;
-	asl::Array<unsigned> _handles;
-	asl::Array<unsigned> _notifications;
-	asl::Dic<unsigned> _namedHandles;
-	asl::Map<asl::ULong, asl::ByteArray> _responses;
-	asl::ByteArray _response;
-	BeckhoffThread* _thread;
-	asl::ULong _lastRequestId;
-	asl::Map<unsigned, asl::Function<void, const asl::ByteArray&> > _callbacks;
+	asl::Socket                                                    _socket;
+	asl::String                                                    _host;
+	asl::Mutex                                                     _mutex;
+	asl::Semaphore                                                 _sem;
+	bool                                                           _connected;
+	bool                                                           _error;
+	NetId                                                          _source;
+	NetId                                                          _target;
+	unsigned                                                       _invokeId;
+	int                                                            _sourcePort;
+	int                                                            _targetPort;
+	asl::Array<unsigned>                                           _handles;
+	asl::Array<unsigned>                                           _notifications;
+	asl::Dic<unsigned>                                             _namedHandles;
+	asl::Map<asl::ULong, asl::ByteArray>                           _responses;
+	asl::ByteArray                                                 _response;
+	BeckhoffThread*                                                _thread;
+	asl::ULong                                                     _lastRequestId;
+	asl::Map<unsigned, asl::Function<void, const asl::ByteArray&>> _callbacks;
 };
 
-
 #endif
-

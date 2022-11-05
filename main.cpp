@@ -17,10 +17,8 @@ int main()
 
 	printf("State %i dev %i\n", state.state, state.deviceState);
 
-	unsigned notif = ads.addNotification<short>("GVL.count", BeckhoffAds::NOTIF_CHANGE, 0.1, 0.1, [](short value)
-	{
-		printf("Notified of count change to %i\n", value);
-	});
+	unsigned notif =
+	    ads.onChange<short>("GVL.count", [](short value) { printf("Notified of count change to %i\n", value); });
 
 	for (int i = 0; i < 10; i++)
 	{
