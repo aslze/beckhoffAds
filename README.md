@@ -17,6 +17,8 @@ ads.setTarget("192.168.0.2.1.1", 851);
 ads.connect("192.168.0.2");
 ```
 
+You will need to set up twincat *routes* (`C:/TwinCAT/3.1/Target/StaticRoutes.xml`).
+
 You can then read and write variables:
 
 ```cpp
@@ -30,12 +32,10 @@ You have to take into account what C++ type correspond to each ADS type (e.g. IN
 You can also register notifications, so that a callback will be called when a variable changes:
 
 ```cpp
-ads.addNotification<short>("GVL.count", BeckhoffAds::NOTIF_CHANGE, 0.1, 0.1, [=](short value)
+ads.onChange<short>("GVL.count", [=](short value)
 {
 	printf("Notified of 'count' change to %i\n", value);
 });
 ```
 
-But currently this callback cannot call other ADS functions (like reading another variable). The program will hang.
-
-*Early version. Structure and API might change.*
+Callbacks can read and write other variables.
