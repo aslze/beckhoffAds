@@ -23,20 +23,30 @@ int main()
 
 	printf("State %i dev %i\n", state.state, state.deviceState);
 
-	unsigned notif =
-	    ads.onChange<short>("GVL.count", [](short value) { printf("Notified of count change to %i\n", value); }, 0.2);
+	ads.writeValue<short>("plc1.count", 0);
+	ads.writeValue<float>("plc1.speed", 12.345f);
+	ads.writeValue<float>("plc1.factor", -3.0f);
 
-	for (int i = 0; i < 10; i++)
+	ads.onChange<short>("plc1.count", [&](short value) {
+		if ((value % 50) == 0)
+			printf("Count changed to %i\n", value);
+	});
+
+	ads.onChange<bool>("plc1.inside", [&](bool value) {
+		printf("-> %s\n", value ? "inside" : "out");
+		ads.writeValue<float>("plc1.factor", value ? 3.0f : -1.5f);
+	});
+
+	for (int i = 0; i < 24; i++)
 	{
-		float speed = ads.readValue<float>("GVL.speed");
-		short count = ads.readValue<short>("GVL.count");
+		float speed = ads.readValue<float>("plc1.speed");
+		short count = ads.readValue<short>("plc1.count");
+		bool  inside = ads.readValue<bool>("plc1.inside");
 
-		printf("v = %f c = %i\n", speed, count);
+		printf("v = %f c = %i (%i)\n", speed, count, inside);
 
-		sleep(0.5);
+		sleep(0.25);
 	}
 
-	ads.removeNotification(notif);
-
-	ads.writeValue<short>("GVL.count", 0);
+	ads.writeValue<short>("plc1.count", 0);
 }
