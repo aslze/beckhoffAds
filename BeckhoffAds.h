@@ -1,4 +1,4 @@
-// Copyright(c) 2019-2021 aslze
+// Copyright(c) 2019-2022 aslze
 
 #ifndef ADSLIB_H
 #define ADSLIB_H

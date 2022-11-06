@@ -257,6 +257,7 @@ ByteArray BeckhoffAds::readPacket()
 	if (_socket.error() || reserved != 0 || totalLen > 5000)
 	{
 		printf("ADS: bad comm (len=%i reserved=%i, read=%i)\n", totalLen, reserved, data.length());
+		_lastError = -1;
 		_sem.post();
 		return data.resize(0);
 	}
@@ -282,7 +283,8 @@ ByteArray BeckhoffAds::readPacket()
 	if ((flags & 1) == 0 && commandId != ADSCOM_DEVICENOTIF)
 	{
 		printf("ADS: received request, not response (cmd: %u)\n", commandId);
-		_sem.post();
+		_lastError = -2;
+		//_sem.post();
 		return data.resize(0);
 	}
 
