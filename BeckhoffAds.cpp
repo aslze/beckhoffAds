@@ -23,9 +23,9 @@ inline ULong pack(unsigned cmd, unsigned invokeId)
 
 struct NotifThread : public asl::Thread
 {
-	const ByteArray                             data;
-	asl::Function<void, const asl::ByteArray&>* func;
-	NotifThread(const ByteArray& b, asl::Function<void, const asl::ByteArray&>& f) : data(b), func(&f) { start(); }
+	const ByteArray                        data;
+	asl::Function<void, const ByteArray&>* func;
+	NotifThread(const ByteArray& b, asl::Function<void, const ByteArray&>& f) : data(b), func(&f) { start(); }
 	void run()
 	{
 		(*func)(data);
@@ -64,18 +64,14 @@ enum AdsIndexGroup
 	ADSIGRP_UPLOADINFO = 0xF00C
 };
 
-BeckhoffAds::NetId::NetId(const char* s)
+void BeckhoffAds::NetId::set(const asl::String& s)
 {
-	data.resize(6);
-	Array<String> parts = String(s).split('.');
-	for (int i = 0; i < 6; i++)
-		data[i] = (byte)(int)parts[i];
-}
-
-BeckhoffAds::NetId::NetId(const String& s)
-{
-	data.resize(6);
 	Array<String> parts = s.split('.');
+	if (parts.length() != 6)
+	{
+		printf("ADS: Bad NetID %s\n", *s);
+		return;
+	}
 	for (int i = 0; i < 6; i++)
 		data[i] = (byte)(int)parts[i];
 }
@@ -105,13 +101,13 @@ BeckhoffAds::BeckhoffAds()
 
 BeckhoffAds::~BeckhoffAds()
 {
-	foreach (unsigned h, _handles)
-		releaseHandle(h);
-
 	foreach (unsigned h, _notifications)
 		removeNotification(h);
 
-	_socket.close();
+	foreach (unsigned h, _handles)
+		releaseHandle(h);
+
+	sleep(0.1);
 }
 
 bool BeckhoffAds::connect(const String& host)
@@ -119,13 +115,11 @@ bool BeckhoffAds::connect(const String& host)
 	_host = host;
 	_error = false;
 	Lock _(_mutex);
-	_socket.close();
 	_socket = Socket();
-	_socket.setEndian(ENDIAN_BIG);
 	_connected = _socket.connect(_host, 48898);
 	if (!_connected)
 	{
-		printf("Error connecting\n");
+		printf("ADS: Error connecting\n");
 	}
 	else
 	{
@@ -164,25 +158,24 @@ void BeckhoffAds::setTarget(const BeckhoffAds::NetId& net, int port)
 	_targetPort = (uint16_t)port;
 }
 
-bool BeckhoffAds::send(int command, const asl::ByteArray& data)
+bool BeckhoffAds::send(int command, const ByteArray& data)
 {
 	Lock _(_mutex);
 	if (!checkConnection())
 		return false;
 
-	StreamBuffer buffer;
-	buffer.setEndian(ENDIAN_LITTLE);
+	StreamBuffer buffer(ENDIAN_LITTLE);
 
-	buffer << (uint16_t)0 << (uint32_t)(data.length() + 32); // AMS/TCP Header
-	buffer << _target.data << (uint16_t)_targetPort << _source.data << (uint16_t)_sourcePort;
-	buffer << (uint16_t)command << (uint16_t)(0x0004) << (uint32_t)data.length();
-	buffer << (uint32_t)0 << (uint32_t)_invokeId++;
+	buffer << uint16_t(0) << uint32_t(data.length() + 32); // AMS/TCP Header
+	buffer << _target.data << uint16_t(_targetPort) << _source.data << uint16_t(_sourcePort);
+	buffer << uint16_t(command) << uint16_t(0x0004) << uint32_t(data.length());
+	buffer << uint32_t(0) << uint32_t(_invokeId++);
 	buffer << data;
 
 	int n = _socket.write(buffer.ptr(), buffer.length());
 	if (n != buffer.length())
 	{
-		printf("send failed %i\n", n);
+		printf("ADS: send failed %i\n", n);
 		return false;
 	}
 
@@ -205,14 +198,16 @@ void BeckhoffAds::receiveLoop()
 	_sem.post(); // wake possible response waiter
 }
 
-void BeckhoffAds::processNotification(const asl::ByteArray& data)
+void BeckhoffAds::processNotification(const ByteArray& data)
 {
 	StreamBufferReader buffer(data);
 	uint32_t           length = 0, stamps = 0;
-	buffer >> (uint32_t)length >> (uint32_t)stamps;
+	buffer >> length >> stamps;
 	// printf("notification: %i stamps\n", stamps);
 	for (unsigned i = 0; i < stamps; i++)
 	{
+		if (buffer.length() < 12)
+			return;
 		ULong    time = 0;
 		uint32_t samples = 0;
 		buffer >> time >> samples;
@@ -220,15 +215,26 @@ void BeckhoffAds::processNotification(const asl::ByteArray& data)
 		// printf(" notification: %i samples\n", samples);
 		for (unsigned j = 0; j < samples; j++)
 		{
+			if (buffer.length() < 8)
+				return;
 			uint32_t handle = 0, size = 0;
 			buffer >> handle >> size;
+			if ((unsigned)buffer.length() < size)
+			{
+				// printf("ADS: notification data %u bytes, remaining=%i\n", size, buffer.length());
+				return;
+			}
 			if (_callbacks.has(handle))
 #ifndef NOTIF_THREAD
 				_callbacks[handle](buffer.read(size)); // send more info, like timestamp??
 #else
 				new NotifThread(buffer.read(size), _callbacks[handle]);
 #endif
-
+			else
+			{
+				// printf("Not my notification\n");
+				buffer.skip(size);
+			}
 			// buffer.skip(size); // this is the actual data
 			// printf("  notification at %s.%i for handle %u size %u\n", *t.toUTCString(), int(1000*fract(t.time())),
 			// handle, size);
@@ -236,46 +242,51 @@ void BeckhoffAds::processNotification(const asl::ByteArray& data)
 	}
 }
 
-asl::ByteArray BeckhoffAds::readPacket()
+ByteArray BeckhoffAds::readPacket()
 {
+	ByteArray data;
 	if (!checkConnection())
-		return asl::ByteArray();
-	uint16_t  reserved = 0;
-	uint32_t  totalLen = 0;
-	ByteArray head = _socket.read(6);
-	if (head.length() < 6)
-		return ByteArray();
-	StreamBufferReader reader(head);
+		return data;
+	uint16_t reserved = 0;
+	uint32_t totalLen = 0;
+	data = _socket.read(6);
+	if (data.length() < 6)
+		return data.resize(0);
+	StreamBufferReader reader(data);
 	reader >> reserved >> totalLen;
 	if (_socket.error() || reserved != 0 || totalLen > 5000)
 	{
-		printf("bad ADS response (len=%i reserved=%i, read=%i)\n", totalLen, reserved, head.length());
+		printf("ADS: bad comm (len=%i reserved=%i, read=%i)\n", totalLen, reserved, data.length());
 		_sem.post();
-		return asl::ByteArray();
+		return data.resize(0);
 	}
-	ByteArray          packet = _socket.read(totalLen);
-	StreamBufferReader buffer(packet);
-	buffer.skip(16);
+	data = _socket.read(totalLen);
+	StreamBufferReader buffer(data);
+	buffer.skip(16); // target net+port, source net+port
 	uint16_t commandId, flags;
 	uint32_t len = 0, error = 0, invokeId;
 	buffer >> commandId >> flags >> len >> error >> invokeId;
+	if (buffer.length() != len)
+		printf("ADS: len=%u, remaining=%i\n", len, buffer.length());
 	if (error != 0)
 	{
 		_lastError = error;
-		printf("bad ADS message error: %i len %i cmd %x \n", error, len, commandId);
-		//_responses[pack(commandId, invokeId)] = asl::ByteArray();
+		printf("ADS: bad message: %u\n", error);
+		//_responses[pack(commandId, invokeId)] = ByteArray();
 		_sem.post();
-		return asl::ByteArray(); // 8?
+		return data.resize(0); // 8?
 	}
 
-	ByteArray data = buffer.read(len);
+	data = buffer.read(len);
 
 	if ((flags & 1) == 0 && commandId != ADSCOM_DEVICENOTIF)
 	{
-		printf("received request, not response (cmd: %u)\n", commandId);
+		printf("ADS: received request, not response (cmd: %u)\n", commandId);
 		_sem.post();
-		return asl::ByteArray();
+		return data.resize(0);
 	}
+
+	Lock _(_mutex);
 
 	switch (commandId)
 	{
@@ -297,28 +308,34 @@ asl::ByteArray BeckhoffAds::readPacket()
 	return data;
 }
 
-asl::ByteArray BeckhoffAds::getResponse()
+ByteArray BeckhoffAds::getResponse()
 {
-	_sem.wait();
-	if (!_responses.has(_lastRequestId))
+	for (int i = 0; i < 3; i++)
 	{
-		printf("Timeout waiting response\n");
-		return asl::ByteArray();
+		_sem.wait();
+		Lock _(_mutex);
+		if (!_responses.has(_lastRequestId))
+		{
+			printf("ADS: Timeout waiting response\n");
+			return ByteArray();
+		}
+
+		ByteArray res = _responses[_lastRequestId];
+
+		_responses.remove(_lastRequestId);
+		return res;
 	}
 
-	asl::ByteArray res = _responses[_lastRequestId];
-
-	_responses.remove(_lastRequestId);
-
-	return res;
+	return ByteArray();
 }
 
-bool BeckhoffAds::write(unsigned group, unsigned offset, const asl::ByteArray& data)
+bool BeckhoffAds::write(unsigned group, unsigned offset, const ByteArray& data)
 {
-	StreamBuffer buffer;
-	buffer.setEndian(ENDIAN_LITTLE);
+	StreamBuffer buffer(ENDIAN_LITTLE);
 	buffer << (uint32_t)group << (uint32_t)offset << (uint32_t)data.length();
 	buffer << data;
+
+	Lock _(_cmdMutex);
 
 	if (!send(ADSCOM_WRITE, buffer))
 		return false;
@@ -335,62 +352,62 @@ bool BeckhoffAds::write(unsigned group, unsigned offset, const asl::ByteArray& d
 	reader >> error;
 	if (error != 0)
 	{
-		printf("bad ADS response %x\n", error);
+		printf("ADS: bad response %u\n", error);
 		return false;
 	}
 	return true;
 }
 
-asl::ByteArray BeckhoffAds::read(unsigned group, unsigned offset, int length)
+ByteArray BeckhoffAds::read(unsigned group, unsigned offset, int length)
 {
-	StreamBuffer buffer;
-	buffer.setEndian(ENDIAN_LITTLE);
+	StreamBuffer buffer(ENDIAN_LITTLE);
 	buffer << (uint32_t)group << (uint32_t)offset << (uint32_t)length;
 
+	Lock _(_cmdMutex);
+
 	if (!send(ADSCOM_READ, buffer))
-		return asl::ByteArray();
+		return ByteArray();
 	ByteArray response = getResponse();
 	if (!response)
 	{
-		return asl::ByteArray();
+		return ByteArray();
 	}
 	StreamBufferReader reader(response);
 	uint32_t           error, len;
 	reader >> error >> len;
 	if (error != 0 || len > 1000)
 	{
-		printf("bad ADS response %x\n", error);
-		return asl::ByteArray();
+		printf("ADS: bad response %u\n", error);
+		return ByteArray();
 	}
-	ByteArray data = reader.read(len);
-	return data;
+	return reader.read(len);
 }
 
-asl::ByteArray BeckhoffAds::readWrite(unsigned group, unsigned offset, int length, const asl::ByteArray& data)
+ByteArray BeckhoffAds::readWrite(unsigned group, unsigned offset, int length, const ByteArray& data)
 {
-	StreamBuffer buffer;
-	buffer.setEndian(ENDIAN_LITTLE);
+	StreamBuffer buffer(ENDIAN_LITTLE);
 	buffer << (uint32_t)group << (uint32_t)offset << (uint32_t)length << (uint32_t)data.length();
 	buffer << data;
 
+	Lock _(_cmdMutex);
+
 	if (!send(ADSCOM_READWRITE, buffer))
-		return asl::ByteArray();
+		return ByteArray();
 
 	ByteArray response = getResponse();
 
 	if (!response)
-		return asl::ByteArray();
+		return ByteArray();
 
 	StreamBufferReader reader(response);
 	uint32_t           error, len;
 	reader >> error >> len;
 	if (error != 0 || len > 1000)
 	{
-		printf("bad ADS response %x\n", error);
-		return asl::ByteArray();
+		printf("ADS: bad response %u\n", error);
+		return ByteArray();
 	}
-	ByteArray resdata = reader.read(len);
-	return resdata;
+	return reader.read(len);
 }
 
 // ADS notification times are in 100 ns units
@@ -399,19 +416,20 @@ asl::ByteArray BeckhoffAds::readWrite(unsigned group, unsigned offset, int lengt
 
 // convert seconds to internal ADS time
 
-inline unsigned toBTime(double t)
+inline uint32_t toBTime(double t)
 {
-	return unsigned(t / 100e-9); // for 100ns)
+	return uint32_t(t / 100e-9); // for 100ns)
 }
 
 unsigned BeckhoffAds::addNotification(unsigned group, unsigned offset, int length, NotificationMode mode, double maxt,
                                       double cycle, Function<void, const ByteArray&> f)
 {
-	StreamBuffer buffer;
-	buffer.setEndian(ENDIAN_LITTLE);
+	StreamBuffer buffer(ENDIAN_LITTLE);
 	buffer << (uint32_t)group << (uint32_t)offset << (uint32_t)length;
-	buffer << (uint32_t)mode << (uint32_t)toBTime(maxt) << (uint32_t)toBTime(cycle);
+	buffer << (uint32_t)mode << toBTime(maxt) << toBTime(cycle);
 	buffer << (uint32_t)0 << (uint32_t)0 << (uint32_t)0 << (uint32_t)0;
+
+	Lock _(_cmdMutex);
 
 	if (!send(ADSCOM_ADDDEVICENOTIF, buffer))
 		return 0;
@@ -426,11 +444,12 @@ unsigned BeckhoffAds::addNotification(unsigned group, unsigned offset, int lengt
 	reader >> error >> handle;
 	if (error != 0)
 	{
-		printf("bad ADS response %x\n", error);
+		printf("ADS: bad response %u\n", error);
 		return 0;
 	}
 
 	_callbacks[handle] = f;
+	_notifications << handle;
 	return handle;
 }
 
@@ -452,9 +471,10 @@ unsigned BeckhoffAds::addNotification(const asl::String& name, int length, Notif
 
 unsigned BeckhoffAds::removeNotification(unsigned handle)
 {
-	StreamBuffer buffer;
-	buffer.setEndian(ENDIAN_LITTLE);
+	StreamBuffer buffer(ENDIAN_LITTLE);
 	buffer << (uint32_t)handle;
+
+	Lock _(_cmdMutex);
 
 	if (!send(ADSCOM_DELDEVICENOTIF, buffer))
 		return 0;
@@ -469,9 +489,13 @@ unsigned BeckhoffAds::removeNotification(unsigned handle)
 	reader >> error;
 	if (error != 0)
 	{
-		printf("bad ADS response %x\n", error);
+		_error = true;
+		printf("ADS: bad response %u\n", error);
 		return 0;
 	}
+
+	_callbacks.remove(handle);
+
 	return handle;
 }
 
@@ -480,34 +504,36 @@ unsigned BeckhoffAds::getHandle(const asl::String& name)
 	ByteArray response = readWrite(ADSIGRP_HNDBYNAME, 0, 4, ByteArray((byte*)*name, name.length() + 1));
 	if (response.length() != 4)
 	{
-		printf("cannot get handle of %s\n", *name);
+		printf("ADS: cannot get handle of %s\n", *name);
 		return 0;
 	}
-	StreamBufferReader reader(response);
-	return reader.read<unsigned>();
+	unsigned h = StreamBufferReader(response).read<unsigned>();
+	//_handles << h;
+	return h;
 }
 
 void BeckhoffAds::releaseHandle(unsigned handle)
 {
-	ByteArray data(4);
-	memcpy(data.ptr(), &handle, sizeof(handle));
+	ByteArray data((byte*)&handle, sizeof(handle));
+	// memcpy(data.ptr(), &handle, sizeof(handle));
 	bool ok = write(ADSIGRP_RELEASEHND, 0, data);
 	if (!ok)
 	{
-		printf("cannot release handle %u\n", handle);
-		return;
+		printf("ADS: cannot release handle %u\n", handle);
 	}
 }
 
 BeckhoffAds::State BeckhoffAds::getState()
 {
+	Lock _(_cmdMutex);
+
 	BeckhoffAds::State state = { 0, 0 };
-	if (!send(ADSCOM_READSTATE, asl::ByteArray()))
+	if (!send(ADSCOM_READSTATE, ByteArray()))
 		return state;
 	ByteArray response = getResponse();
 	if (!response)
 	{
-		printf("Cannot read state\n");
+		printf("ADS: Cannot read state\n");
 		return state;
 	}
 	StreamBufferReader reader(response);
@@ -516,7 +542,7 @@ BeckhoffAds::State BeckhoffAds::getState()
 	reader >> error >> stat >> devstate;
 	if (error != 0)
 	{
-		printf("bad ADS response %x\n", error);
+		printf("ADS: bad response %u\n", error);
 		return state;
 	}
 
@@ -525,30 +551,30 @@ BeckhoffAds::State BeckhoffAds::getState()
 	return state;
 }
 
-asl::ByteArray BeckhoffAds::readValue(const asl::String& name, int n)
+ByteArray BeckhoffAds::readValue(const asl::String& name, int n)
 {
 	ByteArray response = readWrite(ADSIGRP_VALBYNAME, 0, n, ByteArray((byte*)*name, name.length() + 1));
 	if (response.length() != n)
 	{
-		printf("error reading value of %s\n", *name);
-		return asl::ByteArray();
+		printf("ADS: error reading value of %s\n", *name);
+		response.clear();
 	}
 	return response;
 }
 
-bool BeckhoffAds::writeValue(const asl::String& name, const asl::ByteArray& data)
+bool BeckhoffAds::writeValue(const asl::String& name, const ByteArray& data)
 {
 	unsigned handle = getHandle(name);
 	return write(ADSIGRP_VALBYHND, handle, data);
 }
 
-asl::ByteArray BeckhoffAds::readValue(unsigned handle, int n)
+ByteArray BeckhoffAds::readValue(unsigned handle, int n)
 {
 	ByteArray response = read(ADSIGRP_VALBYHND, handle, n);
 	if (response.length() != n)
 	{
-		printf("cannot read value\n");
-		return asl::ByteArray();
+		printf("ADS: cannot read value\n");
+		response.clear();
 	}
 	return response;
 }

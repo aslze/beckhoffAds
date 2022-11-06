@@ -27,10 +27,12 @@ public:
 
 	struct NetId
 	{
-		NetId() : data(6) {}
-		NetId(const char* s);
-		NetId(const asl::String& s);
 		asl::ByteArray data;
+
+		NetId() : data(6) {}
+		NetId(const char* s) : data(6) { set(s); }
+		NetId(const asl::String& s) : data(6) { set(s); }
+		void set(const asl::String& s);
 	};
 
 	enum NotificationMode
@@ -201,7 +203,8 @@ public:
 	 * \param maxt events accumulate up to maxt seconds and are sent together (apparently)
 	 */
 	template<class T>
-	unsigned onChange(const asl::String& name, const asl::Function<void, T>& f, double interval = 0.01, double maxt = 0.01)
+	unsigned onChange(const asl::String& name, const asl::Function<void, T>& f, double interval = 0.01,
+	                  double maxt = 0.01)
 	{
 		return addNotification(name, NOTIF_CHANGE, maxt, interval, f);
 	}
@@ -217,6 +220,7 @@ protected:
 	asl::Socket                                                    _socket;
 	asl::String                                                    _host;
 	asl::Mutex                                                     _mutex;
+	asl::Mutex                                                     _cmdMutex;
 	asl::Semaphore                                                 _sem;
 	bool                                                           _connected;
 	bool                                                           _error;
