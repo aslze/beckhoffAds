@@ -23,9 +23,15 @@ int main()
 
 	printf("State %i dev %i\n", state.state, state.deviceState);
 
+	String name = ads.readValue("plc1.name", 50);
+
+	printf("'%s'\n", *name);
+
 	ads.writeValue<short>("plc1.count", 0);
 	ads.writeValue<float>("plc1.speed", 12.345f);
 	ads.writeValue<float>("plc1.factor", -3.0f);
+
+	printf("flag %i\n", ads.readValue<bool>("plc1.flag"));
 
 	ads.onChange<short>("plc1.count", [&](short value) {
 		if ((value % 50) == 0)
