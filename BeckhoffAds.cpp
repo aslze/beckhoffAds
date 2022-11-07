@@ -64,6 +64,15 @@ enum AdsIndexGroup
 	ADSIGRP_UPLOADINFO = 0xF00C
 };
 
+asl::Map<int, asl::String> adsErrors = String("1827:Access denied,"
+                                              "1810:Invalid state,"
+                                              "1803:Invalid parameters,"
+                                              "1808:Symbol not found,"
+                                              "1812:Invalid notification handle,"
+                                              "1829:License expired,"
+                                              "1843:Invalid function")
+                                           .split(",", ":");
+
 void BeckhoffAds::NetId::set(const asl::String& s)
 {
 	Array<String> parts = s.split('.');
@@ -272,7 +281,7 @@ ByteArray BeckhoffAds::readPacket()
 	if (error != 0)
 	{
 		_lastError = error;
-		printf("ADS: bad message: %u\n", error);
+		printf("ADS: bad message: (%u) %s\n", error, *adsErrors[error]);
 		//_responses[pack(commandId, invokeId)] = ByteArray();
 		_sem.post();
 		return data.resize(0); // 8?
@@ -354,7 +363,7 @@ bool BeckhoffAds::write(unsigned group, unsigned offset, const ByteArray& data)
 	reader >> error;
 	if (error != 0)
 	{
-		printf("ADS: bad response %u\n", error);
+		printf("ADS: write: bad response (%u) %s\n", error, *adsErrors[error]);
 		return false;
 	}
 	return true;
@@ -379,7 +388,7 @@ ByteArray BeckhoffAds::read(unsigned group, unsigned offset, int length)
 	reader >> error >> len;
 	if (error != 0 || len > 1000)
 	{
-		printf("ADS: bad response %u\n", error);
+		printf("ADS: read: bad response (%u) %s\n", error, *adsErrors[error]);
 		return ByteArray();
 	}
 	return reader.read(len);
@@ -406,7 +415,7 @@ ByteArray BeckhoffAds::readWrite(unsigned group, unsigned offset, int length, co
 	reader >> error >> len;
 	if (error != 0 || len > 1000)
 	{
-		printf("ADS: bad response %u\n", error);
+		printf("ADS: readWrite: bad response (%u) %s\n", error, *adsErrors[error]);
 		return ByteArray();
 	}
 	return reader.read(len);
@@ -446,7 +455,7 @@ unsigned BeckhoffAds::addNotification(unsigned group, unsigned offset, int lengt
 	reader >> error >> handle;
 	if (error != 0)
 	{
-		printf("ADS: bad response %u\n", error);
+		printf("ADS: addNotification: bad response (%u) %s\n", error, *adsErrors[error]);
 		return 0;
 	}
 
@@ -455,8 +464,8 @@ unsigned BeckhoffAds::addNotification(unsigned group, unsigned offset, int lengt
 	return handle;
 }
 
-unsigned BeckhoffAds::addNotification(unsigned handle, int length, NotificationMode mode, double maxt, double cycle,
-                                      Function<void, const ByteArray&> f)
+unsigned BeckhoffAds::addNotificationH(unsigned handle, int length, NotificationMode mode, double maxt, double cycle,
+                                       Function<void, const ByteArray&> f)
 {
 	return addNotification(ADSIGRP_VALBYHND, handle, length, mode, maxt, cycle, f);
 }
@@ -468,7 +477,7 @@ unsigned BeckhoffAds::addNotification(const asl::String& name, int length, Notif
 	if (!handle)
 		return 0;
 	_handles << handle;
-	return addNotification(handle, length, mode, maxt, cycle, f);
+	return addNotificationH(handle, length, mode, maxt, cycle, f);
 }
 
 unsigned BeckhoffAds::removeNotification(unsigned handle)

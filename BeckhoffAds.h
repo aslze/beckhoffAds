@@ -103,7 +103,7 @@ public:
 	/**
 	Enables notifications for a variable given its handle and returns a notification handle, times are in seconds
 	*/
-	unsigned addNotification(unsigned handle, int length, NotificationMode mode, double maxt, double cycle,
+	unsigned addNotificationH(unsigned handle, int length, NotificationMode mode, double maxt, double cycle,
 	                         asl::Function<void, const asl::ByteArray&> f);
 
 	/**
@@ -151,9 +151,11 @@ public:
 	Reads a variable given a handle as a specific type
 	*/
 	template<class T>
-	T readValue(unsigned handle)
+	T readValueH(unsigned handle)
 	{
-		asl::ByteArray          response = readValue(handle, sizeof(T));
+		asl::ByteArray          response = readValueH(handle, sizeof(T));
+		if (!response)
+			return T();
 		asl::StreamBufferReader buffer(response);
 		T                       value = buffer.read<T>();
 		return value;
@@ -163,9 +165,11 @@ public:
 	Reads a named variable as a specific type
 	*/
 	template<class T>
-	T readValue(const char* name)
+	T readValue(const asl::String& name)
 	{
-		asl::ByteArray          response = readValue(String(name), sizeof(T));
+		asl::ByteArray          response = readValue(name, sizeof(T));
+		if (!response)
+			return T();
 		asl::StreamBufferReader buffer(response);
 		T                       value = buffer.read<T>();
 		return value;
@@ -175,11 +179,11 @@ public:
 	Writes a named variable as a specific type
 	*/
 	template<class T>
-	bool writeValue(const char* name, const T& value)
+	bool writeValue(const asl::String& name, const T& value)
 	{
 		asl::StreamBuffer buffer;
 		buffer << value;
-		return writeValue(String(name), *buffer);
+		return writeValue(name, *buffer);
 	}
 
 	template<class T>
