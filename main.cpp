@@ -2,13 +2,16 @@
 
 using namespace asl;
 
+void onInsideChanged(bool b)
+{
+	printf("inside changed to %s\n", b ? "true" : "false");
+}
+
 int main()
 {
 	BeckhoffAds ads;
-	ads.setSource("192.168.0.2.1.2", 34000);
-	ads.setTarget("127.0.0.1.1.1", 852);
 
-	if (!ads.connect("127.0.0.1"))
+	if (!ads.connect("127.0.0.1", 852))
 	{
 		return 1;
 	}
@@ -23,16 +26,17 @@ int main()
 
 	printf("State %i dev %i\n", state.state, state.deviceState);
 
-	String name = ads.readValue("plc1.name", 50);
+	String name = ads.readValue("plc1.name", 80);
 
-	printf("'%s'\n", *name);
+	printf("name = '%s'\n", *name);
 
 	ads.writeValue<short>("plc1.count", 0);
 	ads.writeValue<float>("plc1.speed", 12.345f);
 	ads.writeValue<float>("plc1.factor", -3.0f);
 
-	printf("flag %i\n", ads.readValue<bool>("plc1.flag"));
 	ads.writeValue<bool>("plc1.flag", true);
+
+#ifdef ASL_HAVE_LAMBDA
 
 	ads.onChange<short>("plc1.count", [&](short value) {
 		if (value > 1000)
@@ -43,6 +47,10 @@ int main()
 		printf("-> %s\n", value ? "inside" : "out");
 		ads.writeValue<float>("plc1.factor", value ? 3.0f : -1.5f);
 	});
+
+#else
+	ads.onChange<bool>("plc1.inside", &onInsideChanged);
+#endif
 
 	double t1 = now();
 
