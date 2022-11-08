@@ -303,8 +303,16 @@ ByteArray BeckhoffAds::readPacket()
 	}
 	data = _socket.read(totalLen);
 	StreamBufferReader buffer(data);
-	buffer.skip(16); // target net+port, source net+port
-	uint16_t commandId, flags;
+
+	uint16_t portT, portS, commandId, flags;
+	buffer.skip(6); // target net
+	buffer >> portT;
+	buffer.skip(6); // source net
+	buffer >> portS;
+
+	if (portT != _sourcePort || portS != _targetPort) // not my conversation
+		return data.resize(0);
+
 	uint32_t len = 0, error = 0, invokeId;
 	buffer >> commandId >> flags >> len >> error >> invokeId;
 	if (buffer.length() != len)
@@ -349,7 +357,7 @@ ByteArray BeckhoffAds::readPacket()
 
 ByteArray BeckhoffAds::getResponse()
 {
-	for (int i = 0; i < 3; i++)
+	for (int i = 0; i < 5; i++)
 	{
 		_sem.wait();
 		Lock _(_mutex);
