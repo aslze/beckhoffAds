@@ -8,14 +8,14 @@ int main()
 	ads.setSource("192.168.0.2.1.2", 34000);
 	ads.setTarget("127.0.0.1.1.1", 852);
 
-	if (!ads.connect("192.168.0.2"))
+	if (!ads.connect("127.0.0.1"))
 	{
 		return 1;
 	}
 
 	BeckhoffAds::State state = ads.getState();
 
-	if (ads.lastError() > 0)
+	if (ads.hasError())
 	{
 		printf("ADS error %i\n", ads.lastError());
 		return 0;
@@ -32,10 +32,11 @@ int main()
 	ads.writeValue<float>("plc1.factor", -3.0f);
 
 	printf("flag %i\n", ads.readValue<bool>("plc1.flag"));
+	ads.writeValue<bool>("plc1.flag", true);
 
 	ads.onChange<short>("plc1.count", [&](short value) {
-		if ((value % 50) == 0)
-			printf("Count changed to %i\n", value);
+		if (value > 1000)
+			ads.writeValue<short>("plc1.count", 0);
 	});
 
 	ads.onChange<bool>("plc1.inside", [&](bool value) {
@@ -43,15 +44,26 @@ int main()
 		ads.writeValue<float>("plc1.factor", value ? 3.0f : -1.5f);
 	});
 
-	for (int i = 0; i < 24; i++)
+	double t1 = now();
+
+	while (1)
 	{
+		if (now() - t1 > 1000)
+			break;
 		float speed = ads.readValue<float>("plc1.speed");
 		short count = ads.readValue<short>("plc1.count");
 		bool  inside = ads.readValue<bool>("plc1.inside");
+		bool  flag = ads.readValue<bool>("plc1.flag");
 
-		printf("v = %f c = %i (%i)\n", speed, count, inside);
+		printf("v = %f c = %i (%i, %i)\n", speed, count, inside, flag);
 
-		sleep(0.25);
+		sleep(0.2);
+
+		if (ads.hasError())
+		{
+			printf("ADS Error after %.2f s\n", now() - t1);
+			break;
+		}
 	}
 
 	ads.writeValue<short>("plc1.count", 0);

@@ -215,6 +215,8 @@ public:
 
 	int lastError() const { return _lastError; }
 
+	bool hasError() const { return _lastError != 0; }
+
 protected:
 	void processNotification(const asl::ByteArray& data);
 

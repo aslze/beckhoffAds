@@ -4,8 +4,6 @@
 
 #define NOTIF_THREAD // notifications start a thread each
 
-// could have a thread with a queue of notifications to call in sequence, and semaphore to trigger
-
 #include "BeckhoffAds.h"
 #include <asl/StreamBuffer.h>
 #include <asl/Thread.h>
@@ -101,8 +99,9 @@ BeckhoffAds::BeckhoffAds()
 {
 	_connected = false;
 	_error = false;
-	_source = String("192.168.0.2.1.1");
+	_source = "127.0.0.1.1.1";
 	_sourcePort = (uint16_t)34000;
+	_target = "127.0.0.1.1.1";
 	_invokeId = 0;
 	_thread = 0;
 	_lastError = 0;
@@ -110,12 +109,7 @@ BeckhoffAds::BeckhoffAds()
 
 BeckhoffAds::~BeckhoffAds()
 {
-	foreach (unsigned h, _notifications)
-		removeNotification(h);
-
-	foreach (unsigned h, _handles)
-		releaseHandle(h);
-
+	disconnect();
 	sleep(0.1);
 }
 
@@ -123,6 +117,7 @@ bool BeckhoffAds::connect(const String& host)
 {
 	_host = host;
 	_error = false;
+	_lastError = 0;
 	Lock _(_mutex);
 	_socket = Socket();
 	_connected = _socket.connect(_host, 48898);
@@ -132,6 +127,19 @@ bool BeckhoffAds::connect(const String& host)
 	}
 	else
 	{
+		if (host == "127.0.0.1")
+		{
+			ByteArray data = (ByteArray(), 0, 16, 2, 0, 0, 0, 0, 0);
+			_socket << data;
+			ByteArray res = _socket.read(14);
+			if (res.length() != 14)
+			{
+				printf("oops\n");
+			}
+			memcpy(_source.data.ptr(), res.ptr() + 6, 6);
+			_sourcePort = (unsigned short)res[12] | ((unsigned short)res[13] << 8);
+		}
+
 		_thread = new BeckhoffThread;
 		_thread->_ads = this;
 		_thread->start();
@@ -141,6 +149,17 @@ bool BeckhoffAds::connect(const String& host)
 
 void BeckhoffAds::disconnect()
 {
+	if (!_connected)
+		return;
+	foreach (unsigned h, _notifications)
+		removeNotification(h);
+
+	foreach (unsigned h, _handles)
+		releaseHandle(h);
+
+	_handles.clear();
+	_notifications.clear();
+
 	_connected = false;
 	_error = false;
 	_socket.close();
@@ -150,6 +169,8 @@ bool BeckhoffAds::checkConnection()
 {
 	if (_connected && _socket.disconnected())
 	{
+		printf("ADS: Peer disconnected (invokeid: %u)\n", _invokeId);
+		_lastError = -5;
 		_connected = false;
 	}
 	return _connected;
@@ -170,15 +191,13 @@ void BeckhoffAds::setTarget(const BeckhoffAds::NetId& net, int port)
 bool BeckhoffAds::send(int command, const ByteArray& data)
 {
 	Lock _(_mutex);
-	if (!checkConnection())
-		return false;
 
 	StreamBuffer buffer(ENDIAN_LITTLE);
 
 	buffer << uint16_t(0) << uint32_t(data.length() + 32); // AMS/TCP Header
 	buffer << _target.data << uint16_t(_targetPort) << _source.data << uint16_t(_sourcePort);
 	buffer << uint16_t(command) << uint16_t(0x0004) << uint32_t(data.length());
-	buffer << uint32_t(0) << uint32_t(_invokeId++);
+	buffer << uint32_t(0) << uint32_t(_invokeId);
 	buffer << data;
 
 	int n = _socket.write(buffer.ptr(), buffer.length());
@@ -188,7 +207,9 @@ bool BeckhoffAds::send(int command, const ByteArray& data)
 		return false;
 	}
 
-	_lastRequestId = pack(command, _invokeId - 1);
+	_lastRequestId = pack(command, _invokeId);
+
+	_invokeId = (_invokeId + 1) % (1 << 30);
 
 	return true;
 }
@@ -292,7 +313,7 @@ ByteArray BeckhoffAds::readPacket()
 	if ((flags & 1) == 0 && commandId != ADSCOM_DEVICENOTIF)
 	{
 		printf("ADS: received request, not response (cmd: %u)\n", commandId);
-		_lastError = -2;
+		//_lastError = -2;
 		//_sem.post();
 		return data.resize(0);
 	}
@@ -519,14 +540,12 @@ unsigned BeckhoffAds::getHandle(const asl::String& name)
 		return 0;
 	}
 	unsigned h = StreamBufferReader(response).read<unsigned>();
-	//_handles << h;
 	return h;
 }
 
 void BeckhoffAds::releaseHandle(unsigned handle)
 {
 	ByteArray data((byte*)&handle, sizeof(handle));
-	// memcpy(data.ptr(), &handle, sizeof(handle));
 	bool ok = write(ADSIGRP_RELEASEHND, 0, data);
 	if (!ok)
 	{
@@ -584,7 +603,7 @@ ByteArray BeckhoffAds::readValue(unsigned handle, int n)
 	ByteArray response = read(ADSIGRP_VALBYHND, handle, n);
 	if (response.length() != n)
 	{
-		printf("ADS: cannot read value\n");
+		printf("ADS: cannot read value (invokeid: %u)\n", _invokeId);
 		response.clear();
 	}
 	return response;
