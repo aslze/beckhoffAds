@@ -29,10 +29,11 @@ public:
 	{
 		asl::ByteArray data;
 
-		NetId() : data(6) {}
-		NetId(const char* s) : data(6) { set(s); }
-		NetId(const asl::String& s) : data(6) { set(s); }
+		NetId() : data(6, 0) {}
+		NetId(const char* s) : data(6, 0) { set(s); }
+		NetId(const asl::String& s) : data(6, 0) { set(s); }
 		void set(const asl::String& s);
+		bool operator!() const { return data == asl::ByteArray(6, 0); }
 	};
 
 	enum NotificationMode
@@ -45,39 +46,24 @@ public:
 	~BeckhoffAds();
 
 	/**
-	Connects to an ADS device at the given host via TCP/IP
+	Connects to an ADS device at the given host via TCP/IP and given ADS port (default 851)
 	*/
-	bool connect(const asl::String& host);
+	bool connect(const asl::String& host, int adsPort = -1);
 
 	/**
 	Disconnects from the remote host
 	*/
 	void disconnect();
 
-	bool checkConnection();
-
 	/**
 	Sets the NetID and port of the source for communications
 	*/
 	void setSource(const NetId& net, int port);
+
 	/**
 	Sets the NetID and port of the target for communications
 	*/
 	void setTarget(const NetId& net, int port);
-
-	// bool writePacket(const asl::ByteArray& data);
-
-	/**
-	Sends an ADS  packet with the given command ID and data
-	*/
-	bool send(int command, const asl::ByteArray& data);
-
-	/**
-	Reads an incoming ADS packet
-	*/
-	asl::ByteArray readPacket();
-
-	asl::ByteArray getResponse();
 
 	/**
 	Writes data to a given index group and offset
@@ -104,7 +90,7 @@ public:
 	Enables notifications for a variable given its handle and returns a notification handle, times are in seconds
 	*/
 	unsigned addNotificationH(unsigned handle, int length, NotificationMode mode, double maxt, double cycle,
-	                         asl::Function<void, const asl::ByteArray&> f);
+	                          asl::Function<void, const asl::ByteArray&> f);
 
 	/**
 	Enables notifications for a variable given its name and returns a notification handle, times are in seconds
@@ -135,7 +121,7 @@ public:
 	/**
 	Reads a named variable as data
 	*/
-	asl::ByteArray readValue(const asl::String& name, int n);
+	asl::ByteArray readValue(const asl::String& name, int n, bool exact = false);
 
 	/**
 	Writes a named variable as data
@@ -145,7 +131,7 @@ public:
 	/**
 	Reads a variable given a handle as data
 	*/
-	asl::ByteArray readValue(unsigned handle, int n);
+	asl::ByteArray readValueH(unsigned handle, int n, bool exact = false);
 
 	/**
 	Reads a variable given a handle as a specific type
@@ -153,12 +139,10 @@ public:
 	template<class T>
 	T readValueH(unsigned handle)
 	{
-		asl::ByteArray          response = readValueH(handle, sizeof(T));
+		asl::ByteArray response = readValueH(handle, sizeof(T), true);
 		if (!response)
 			return T();
-		asl::StreamBufferReader buffer(response);
-		T                       value = buffer.read<T>();
-		return value;
+		return asl::StreamBufferReader(response).read<T>();
 	}
 
 	/**
@@ -167,12 +151,10 @@ public:
 	template<class T>
 	T readValue(const asl::String& name)
 	{
-		asl::ByteArray          response = readValue(name, sizeof(T));
+		asl::ByteArray response = readValue(name, sizeof(T), true);
 		if (!response)
 			return T();
-		asl::StreamBufferReader buffer(response);
-		T                       value = buffer.read<T>();
-		return value;
+		return asl::StreamBufferReader(response).read<T>();
 	}
 
 	/**
@@ -181,9 +163,7 @@ public:
 	template<class T>
 	bool writeValue(const asl::String& name, const T& value)
 	{
-		asl::StreamBuffer buffer;
-		buffer << value;
-		return writeValue(name, *buffer);
+		return writeValue(name, *(asl::StreamBuffer() << value));
 	}
 
 	template<class T>
@@ -213,14 +193,31 @@ public:
 		return addNotification(name, NOTIF_CHANGE, maxt, interval, f);
 	}
 
+	/**
+	 * Returns the code of the last error
+	 */
 	int lastError() const { return _lastError; }
 
+	/**
+	 * Return true if there were errors
+	 */
 	bool hasError() const { return _lastError != 0; }
 
 protected:
+	asl::ByteArray getResponse();
 	void processNotification(const asl::ByteArray& data);
-
+	bool checkConnection();
 	void receiveLoop();
+	
+	/**
+	Sends an ADS  packet with the given command ID and data
+	*/
+	bool send(int command, const asl::ByteArray& data);
+
+	/**
+	Reads an incoming ADS packet
+	*/
+	asl::ByteArray readPacket();
 
 protected:
 	asl::Socket                                                    _socket;
@@ -229,7 +226,6 @@ protected:
 	asl::Mutex                                                     _cmdMutex;
 	asl::Semaphore                                                 _sem;
 	bool                                                           _connected;
-	bool                                                           _error;
 	NetId                                                          _source;
 	NetId                                                          _target;
 	unsigned                                                       _invokeId;

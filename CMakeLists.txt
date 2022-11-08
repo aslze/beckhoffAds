@@ -8,6 +8,12 @@ set(TARGET beckhoffAds)
 
 if(NOT TARGET asls)
 	find_package(ASL)
+	if(NOT TARGET asls)
+		cmake_minimum_required(VERSION 3.14...3.24)
+		include(FetchContent)
+		FetchContent_Declare(asl URL https://github.com/aslze/asl/archive/1.11.3.zip)
+		FetchContent_MakeAvailable(asl)
+	endif()
 endif()
 
 set(CMAKE_DEBUG_POSTFIX "d")

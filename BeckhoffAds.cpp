@@ -62,7 +62,9 @@ enum AdsIndexGroup
 	ADSIGRP_UPLOADINFO = 0xF00C
 };
 
-asl::Map<int, asl::String> adsErrors = String("1827:Access denied,"
+asl::Map<int, asl::String> adsErrors = String("6:Port not found,"
+                                              "7:Target not found,"
+                                              "1827:Access denied,"
                                               "1810:Invalid state,"
                                               "1803:Invalid parameters,"
                                               "1808:Symbol not found,"
@@ -73,6 +75,9 @@ asl::Map<int, asl::String> adsErrors = String("1827:Access denied,"
 
 void BeckhoffAds::NetId::set(const asl::String& s)
 {
+	if (!s.ok())
+		return;
+
 	Array<String> parts = s.split('.');
 	if (parts.length() != 6)
 	{
@@ -98,10 +103,8 @@ void BeckhoffThread::run()
 BeckhoffAds::BeckhoffAds()
 {
 	_connected = false;
-	_error = false;
-	_source = "127.0.0.1.1.1";
 	_sourcePort = (uint16_t)34000;
-	_target = "127.0.0.1.1.1";
+	_targetPort = 851;
 	_invokeId = 0;
 	_thread = 0;
 	_lastError = 0;
@@ -113,31 +116,38 @@ BeckhoffAds::~BeckhoffAds()
 	sleep(0.1);
 }
 
-bool BeckhoffAds::connect(const String& host)
+bool BeckhoffAds::connect(const String& host, int adsPort)
 {
-	_host = host;
-	_error = false;
+	_host = host | "127.0.0.1";
 	_lastError = 0;
 	Lock _(_mutex);
 	_socket = Socket();
 	_connected = _socket.connect(_host, 48898);
+
+	if (adsPort >= 0)
+		_targetPort = adsPort;
+
 	if (!_connected)
 	{
 		printf("ADS: Error connecting\n");
 	}
 	else
 	{
-		if (host == "127.0.0.1")
+		if (!_source)
+			_source.set(_socket.localAddress().toString().split(':')[0] + ".1.1");
+		if (!_target)
+			_target.set(_socket.remoteAddress().toString().split(':')[0] + ".1.1");
+		if (_host == "127.0.0.1")
 		{
-			ByteArray data = (ByteArray(), 0, 16, 2, 0, 0, 0, 0, 0);
-			_socket << data;
+			_socket << (ByteArray(), 0, 16, 2, 0, 0, 0, 0, 0);
 			ByteArray res = _socket.read(14);
-			if (res.length() != 14)
+			if (res.length() == 14)
 			{
-				printf("oops\n");
+				memcpy(_source.data.ptr(), res.ptr() + 6, 6);
+				_sourcePort = (unsigned short)res[12] | ((unsigned short)res[13] << 8);
 			}
-			memcpy(_source.data.ptr(), res.ptr() + 6, 6);
-			_sourcePort = (unsigned short)res[12] | ((unsigned short)res[13] << 8);
+			else
+				printf("oops\n");
 		}
 
 		_thread = new BeckhoffThread;
@@ -159,9 +169,11 @@ void BeckhoffAds::disconnect()
 
 	_handles.clear();
 	_notifications.clear();
-
+	sleep(0.2);
 	_connected = false;
-	_error = false;
+	if (_thread)
+		_thread->join();
+	delete _thread;
 	_socket.close();
 }
 
@@ -216,16 +228,16 @@ bool BeckhoffAds::send(int command, const ByteArray& data)
 
 void BeckhoffAds::receiveLoop()
 {
-	while (1)
+	while (_connected)
 	{
-		if (_socket.waitInput(5))
+		if (_socket.waitInput(1))
 		{
 			if (_socket.disconnected())
 				break;
 			ByteArray data = readPacket();
 		}
 	}
-	_sem.post(); // wake possible response waiter
+	_sem.post();
 }
 
 void BeckhoffAds::processNotification(const ByteArray& data)
@@ -233,7 +245,7 @@ void BeckhoffAds::processNotification(const ByteArray& data)
 	StreamBufferReader buffer(data);
 	uint32_t           length = 0, stamps = 0;
 	buffer >> length >> stamps;
-	// printf("notification: %i stamps\n", stamps);
+	
 	for (unsigned i = 0; i < stamps; i++)
 	{
 		if (buffer.length() < 12)
@@ -242,7 +254,7 @@ void BeckhoffAds::processNotification(const ByteArray& data)
 		uint32_t samples = 0;
 		buffer >> time >> samples;
 		Date t = time * 100e-9 - 11644473600.0;
-		// printf(" notification: %i samples\n", samples);
+		
 		for (unsigned j = 0; j < samples; j++)
 		{
 			if (buffer.length() < 8)
@@ -251,7 +263,6 @@ void BeckhoffAds::processNotification(const ByteArray& data)
 			buffer >> handle >> size;
 			if ((unsigned)buffer.length() < size)
 			{
-				// printf("ADS: notification data %u bytes, remaining=%i\n", size, buffer.length());
 				return;
 			}
 			if (_callbacks.has(handle))
@@ -262,7 +273,6 @@ void BeckhoffAds::processNotification(const ByteArray& data)
 #endif
 			else
 			{
-				// printf("Not my notification\n");
 				buffer.skip(size);
 			}
 			// buffer.skip(size); // this is the actual data
@@ -287,7 +297,7 @@ ByteArray BeckhoffAds::readPacket()
 	if (_socket.error() || reserved != 0 || totalLen > 5000)
 	{
 		printf("ADS: bad comm (len=%i reserved=%i, read=%i)\n", totalLen, reserved, data.length());
-		_lastError = -1;
+		_lastError = -4;
 		_sem.post();
 		return data.resize(0);
 	}
@@ -303,7 +313,6 @@ ByteArray BeckhoffAds::readPacket()
 	{
 		_lastError = error;
 		printf("ADS: bad message: (%u) %s\n", error, *adsErrors[error]);
-		//_responses[pack(commandId, invokeId)] = ByteArray();
 		_sem.post();
 		return data.resize(0); // 8?
 	}
@@ -313,8 +322,6 @@ ByteArray BeckhoffAds::readPacket()
 	if ((flags & 1) == 0 && commandId != ADSCOM_DEVICENOTIF)
 	{
 		printf("ADS: received request, not response (cmd: %u)\n", commandId);
-		//_lastError = -2;
-		//_sem.post();
 		return data.resize(0);
 	}
 
@@ -349,6 +356,7 @@ ByteArray BeckhoffAds::getResponse()
 		if (!_responses.has(_lastRequestId))
 		{
 			printf("ADS: Timeout waiting response\n");
+			_lastError = -3;
 			return ByteArray();
 		}
 
@@ -513,16 +521,14 @@ unsigned BeckhoffAds::removeNotification(unsigned handle)
 
 	ByteArray response = getResponse();
 	if (!response)
-	{
 		return 0;
-	}
+
 	StreamBufferReader reader(response);
 	uint32_t           error;
 	reader >> error;
 	if (error != 0)
 	{
-		_error = true;
-		printf("ADS: bad response %u\n", error);
+		printf("ADS: bad response (%u) %s\n", error, *adsErrors[error]);
 		return 0;
 	}
 
@@ -539,14 +545,13 @@ unsigned BeckhoffAds::getHandle(const asl::String& name)
 		printf("ADS: cannot get handle of %s\n", *name);
 		return 0;
 	}
-	unsigned h = StreamBufferReader(response).read<unsigned>();
-	return h;
+	return StreamBufferReader(response).read<unsigned>();
 }
 
 void BeckhoffAds::releaseHandle(unsigned handle)
 {
-	ByteArray data((byte*)&handle, sizeof(handle));
-	bool ok = write(ADSIGRP_RELEASEHND, 0, data);
+	ByteArray data((byte*)&handle, sizeof(handle)); // assuming LE
+	bool      ok = write(ADSIGRP_RELEASEHND, 0, data);
 	if (!ok)
 	{
 		printf("ADS: cannot release handle %u\n", handle);
@@ -581,12 +586,23 @@ BeckhoffAds::State BeckhoffAds::getState()
 	return state;
 }
 
-ByteArray BeckhoffAds::readValue(const asl::String& name, int n)
+ByteArray BeckhoffAds::readValue(const asl::String& name, int n, bool exact)
 {
 	ByteArray response = readWrite(ADSIGRP_VALBYNAME, 0, n, ByteArray((byte*)*name, name.length() + 1));
-	if (response.length() != n)
+	if (response.length() > n || exact && response.length() != n)
 	{
 		printf("ADS: error reading value of %s\n", *name);
+		response.clear();
+	}
+	return response;
+}
+
+ByteArray BeckhoffAds::readValueH(unsigned handle, int n, bool exact)
+{
+	ByteArray response = read(ADSIGRP_VALBYHND, handle, n);
+	if (response.length() > n || exact && response.length() != n)
+	{
+		printf("ADS: cannot read value by handle\n");
 		response.clear();
 	}
 	return response;
@@ -596,15 +612,4 @@ bool BeckhoffAds::writeValue(const asl::String& name, const ByteArray& data)
 {
 	unsigned handle = getHandle(name);
 	return write(ADSIGRP_VALBYHND, handle, data);
-}
-
-ByteArray BeckhoffAds::readValue(unsigned handle, int n)
-{
-	ByteArray response = read(ADSIGRP_VALBYHND, handle, n);
-	if (response.length() != n)
-	{
-		printf("ADS: cannot read value (invokeid: %u)\n", _invokeId);
-		response.clear();
-	}
-	return response;
 }
