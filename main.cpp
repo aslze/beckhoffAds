@@ -18,7 +18,7 @@ int main()
 
 	BeckhoffAds::State state = ads.getState();
 
-	if (ads.hasError())
+	if (state.invalid || ads.hasFatalError())
 	{
 		printf("ADS error %i\n", ads.lastError());
 		return 0;
@@ -30,7 +30,7 @@ int main()
 
 	printf("name = '%s'\n", *name);
 
-	ads.writeValue<short>("plc1.count", 0);
+	ads.writeValue<int>("plc1.count", 0);
 	ads.writeValue<float>("plc1.speed", 12.345f);
 	ads.writeValue<float>("plc1.factor", -3.0f);
 
@@ -38,9 +38,9 @@ int main()
 
 #ifdef ASL_HAVE_LAMBDA
 
-	ads.onChange<short>("plc1.count", [&](short value) {
+	ads.onChange<int>("plc1.count", [&](int value) {
 		if (value > 1000)
-			ads.writeValue<short>("plc1.count", 0);
+			ads.writeValue<int>("plc1.count", 0);
 	});
 
 	ads.onChange<bool>("plc1.inside", [&](bool value) {
@@ -59,7 +59,7 @@ int main()
 		if (now() - t1 > 1000)
 			break;
 		float speed = ads.readValue<float>("plc1.speed");
-		short count = ads.readValue<short>("plc1.count");
+		int count = ads.readValue<int>("plc1.count");
 		bool  inside = ads.readValue<bool>("plc1.inside");
 		bool  flag = ads.readValue<bool>("plc1.flag");
 
@@ -67,7 +67,7 @@ int main()
 
 		sleep(0.2);
 
-		if (ads.hasError())
+		if (ads.hasFatalError())
 		{
 			printf("ADS Error after %.2f s\n", now() - t1);
 			break;

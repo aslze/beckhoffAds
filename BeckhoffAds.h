@@ -23,6 +23,7 @@ public:
 	{
 		int state;
 		int deviceState;
+		bool invalid;
 	};
 
 	struct NetId
@@ -196,12 +197,17 @@ public:
 	/**
 	 * Returns the code of the last error
 	 */
-	int lastError() const { return _lastError; }
+	int lastError() const { return _adsError; }
 
 	/**
 	 * Return true if there were errors
 	 */
-	bool hasError() const { return _lastError != 0; }
+	bool hasError() const;
+
+	/**
+	 * Return true if there were fatal errors like communication failures
+	 */
+	bool hasFatalError() const;
 
 protected:
 	asl::ByteArray getResponse();
@@ -232,6 +238,7 @@ protected:
 	int                                                            _sourcePort;
 	int                                                            _targetPort;
 	int                                                            _lastError;
+	int                                                            _adsError;
 	asl::Array<unsigned>                                           _handles;
 	asl::Array<unsigned>                                           _notifications;
 	asl::Dic<unsigned>                                             _namedHandles;

@@ -68,6 +68,7 @@ asl::Map<int, asl::String> adsErrors = String("6:Port not found,"
                                               "1810:Invalid state,"
                                               "1803:Invalid parameters,"
                                               "1808:Symbol not found,"
+                                              "1809:Invalid handle,"
                                               "1812:Invalid notification handle,"
                                               "1829:License expired,"
                                               "1843:Invalid function")
@@ -108,6 +109,7 @@ BeckhoffAds::BeckhoffAds()
 	_invokeId = 0;
 	_thread = 0;
 	_lastError = 0;
+	_adsError = 0;
 }
 
 BeckhoffAds::~BeckhoffAds()
@@ -119,7 +121,7 @@ BeckhoffAds::~BeckhoffAds()
 bool BeckhoffAds::connect(const String& host, int adsPort)
 {
 	_host = host | "127.0.0.1";
-	_lastError = 0;
+	_lastError = _adsError = 0;
 	Lock _(_mutex);
 	_socket = Socket();
 	_connected = _socket.connect(_host, 48898);
@@ -204,6 +206,8 @@ bool BeckhoffAds::send(int command, const ByteArray& data)
 {
 	Lock _(_mutex);
 
+	_adsError = 0;
+
 	StreamBuffer buffer(ENDIAN_LITTLE);
 
 	buffer << uint16_t(0) << uint32_t(data.length() + 32); // AMS/TCP Header
@@ -216,6 +220,7 @@ bool BeckhoffAds::send(int command, const ByteArray& data)
 	if (n != buffer.length())
 	{
 		printf("ADS: send failed %i\n", n);
+		_lastError = -6;
 		return false;
 	}
 
@@ -319,8 +324,8 @@ ByteArray BeckhoffAds::readPacket()
 		printf("ADS: len=%u, remaining=%i\n", len, buffer.length());
 	if (error != 0)
 	{
-		_lastError = error;
-		printf("ADS: bad message: (%u) %s\n", error, *adsErrors[error]);
+		_adsError = error;
+		printf("ADS: error: (%u) %s\n", error, *adsErrors[error]);
 		_sem.post();
 		return data.resize(0); // 8?
 	}
@@ -355,12 +360,24 @@ ByteArray BeckhoffAds::readPacket()
 	return data;
 }
 
+bool BeckhoffAds::hasError() const
+{
+	return _adsError != 0;
+}
+
+bool BeckhoffAds::hasFatalError() const
+{
+	return _lastError != 0;
+}
+
 ByteArray BeckhoffAds::getResponse()
 {
 	for (int i = 0; i < 5; i++)
 	{
 		_sem.wait();
 		Lock _(_mutex);
+		if (_adsError != 0)
+			return ByteArray();
 		if (!_responses.has(_lastRequestId))
 		{
 			printf("ADS: Timeout waiting response\n");
@@ -425,7 +442,8 @@ ByteArray BeckhoffAds::read(unsigned group, unsigned offset, int length)
 	reader >> error >> len;
 	if (error != 0 || len > 1000)
 	{
-		printf("ADS: read: bad response (%u) %s\n", error, *adsErrors[error]);
+		printf("ADS: read error (%u) %s\n", error, *adsErrors[error]);
+		_adsError = error;
 		return ByteArray();
 	}
 	return reader.read(len);
@@ -452,7 +470,8 @@ ByteArray BeckhoffAds::readWrite(unsigned group, unsigned offset, int length, co
 	reader >> error >> len;
 	if (error != 0 || len > 1000)
 	{
-		printf("ADS: readWrite: bad response (%u) %s\n", error, *adsErrors[error]);
+		printf("ADS: readWrite error (%u) %s\n", error, *adsErrors[error]);
+		_adsError = error;
 		return ByteArray();
 	}
 	return reader.read(len);
@@ -492,7 +511,8 @@ unsigned BeckhoffAds::addNotification(unsigned group, unsigned offset, int lengt
 	reader >> error >> handle;
 	if (error != 0)
 	{
-		printf("ADS: addNotification: bad response (%u) %s\n", error, *adsErrors[error]);
+		printf("ADS: addNotification error: (%u) %s\n", error, *adsErrors[error]);
+		_adsError = error;
 		return 0;
 	}
 
@@ -536,7 +556,7 @@ unsigned BeckhoffAds::removeNotification(unsigned handle)
 	reader >> error;
 	if (error != 0)
 	{
-		printf("ADS: bad response (%u) %s\n", error, *adsErrors[error]);
+		printf("ADS: removeNotification error (%u) %s\n", error, *adsErrors[error]);
 		return 0;
 	}
 
@@ -570,7 +590,7 @@ BeckhoffAds::State BeckhoffAds::getState()
 {
 	Lock _(_cmdMutex);
 
-	BeckhoffAds::State state = { 0, 0 };
+	BeckhoffAds::State state = { 0, 0, true };
 	if (!send(ADSCOM_READSTATE, ByteArray()))
 		return state;
 	ByteArray response = getResponse();
@@ -585,21 +605,22 @@ BeckhoffAds::State BeckhoffAds::getState()
 	reader >> error >> stat >> devstate;
 	if (error != 0)
 	{
-		printf("ADS: bad response %u\n", error);
+		printf("ADS: getState error %u\n", error);
 		return state;
 	}
 
 	state.state = stat;
 	state.deviceState = devstate;
+	state.invalid = false;
 	return state;
 }
 
 ByteArray BeckhoffAds::readValue(const asl::String& name, int n, bool exact)
 {
 	ByteArray response = readWrite(ADSIGRP_VALBYNAME, 0, n, ByteArray((byte*)*name, name.length() + 1));
-	if (response.length() > n || exact && response.length() != n)
+	if (response.length() > n || !response || exact && response.length() != n)
 	{
-		printf("ADS: error reading value of %s\n", *name);
+		printf("ADS: error reading value of %s (%i: %s)\n", *name, _adsError, *adsErrors[_adsError]);
 		response.clear();
 	}
 	return response;
@@ -619,5 +640,7 @@ ByteArray BeckhoffAds::readValueH(unsigned handle, int n, bool exact)
 bool BeckhoffAds::writeValue(const asl::String& name, const ByteArray& data)
 {
 	unsigned handle = getHandle(name);
+	if (_adsError != 0 || _lastError != 0)
+		return false;
 	return write(ADSIGRP_VALBYHND, handle, data);
 }
