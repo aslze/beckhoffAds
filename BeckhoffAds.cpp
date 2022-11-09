@@ -64,6 +64,7 @@ enum AdsIndexGroup
 
 asl::Map<int, asl::String> adsErrors = String("6:Port not found,"
                                               "7:Target not found,"
+                                              "18:Port disabled,"
                                               "1827:Access denied,"
                                               "1810:Invalid state,"
                                               "1803:Invalid parameters,"
