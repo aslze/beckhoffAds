@@ -20,16 +20,16 @@ You can then read and write variables:
 
 ```cpp
 float speed = ads.readValue<float>("GVL.speed");
-ads.writeValue<short>("GVL.count", 0);
+ads.writeValue<int>("GVL.count", 0);
 ```
 
-You have to take into account what C++ type correspond to each ADS type (e.g. INT -> int16_t, REAL -> float, BOOL -> char, etc.).
+You have to take into account what C++ type correspond to each ADS type (e.g. INT -> int16_t, DINT -> int32_t, REAL -> float, BOOL -> char, etc.).
 
 
 You can also register notifications, so that a callback will be called when a variable changes:
 
 ```cpp
-ads.onChange<short>("GVL.count", [&](short value)
+ads.onChange<int>("GVL.count", [&](int value)
 {
 	printf("Notified of 'count' change to %i\n", value);
 });
@@ -40,5 +40,5 @@ On older compilers without lambdas you can use a function pointer or a functor a
 Communication errors can be detected with:
 
 ```cpp
-ads.hasError();
+ads.hasFatalError();
 ```
