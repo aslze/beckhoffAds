@@ -21,9 +21,23 @@ class BeckhoffAds
 public:
 	struct State
 	{
-		int state;
-		int deviceState;
+		int  state;
+		int  deviceState;
 		bool invalid;
+	};
+
+	struct DevInfo
+	{
+		int         minor, major, build;
+		asl::String name;
+	};
+
+	struct SymInfo
+	{
+		asl::String name;
+		asl::String typeName;
+		int         type;
+		unsigned    flags;
 	};
 
 	struct NetId
@@ -120,6 +134,16 @@ public:
 	State getState();
 
 	/**
+	Gets device information including version and device name
+	*/
+	DevInfo getInfo();
+
+	/**
+	Gets the list of symbols (variables) in the device, with their types
+	*/
+	asl::Array<BeckhoffAds::SymInfo> getSymbols();
+
+	/**
 	Reads a named variable as data
 	*/
 	asl::ByteArray readValue(const asl::String& name, int n, bool exact = false);
@@ -211,10 +235,10 @@ public:
 
 protected:
 	asl::ByteArray getResponse();
-	void processNotification(const asl::ByteArray& data);
-	bool checkConnection();
-	void receiveLoop();
-	
+	void           processNotification(const asl::ByteArray& data);
+	bool           checkConnection();
+	void           receiveLoop();
+
 	/**
 	Sends an ADS  packet with the given command ID and data
 	*/

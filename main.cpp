@@ -24,6 +24,17 @@ int main()
 		return 0;
 	}
 
+	BeckhoffAds::DevInfo info = ads.getInfo();
+
+	printf("Version: %i.%i.%i\nDevice name: '%s'\n", info.major, info.minor, info.build, *info.name);
+
+	Array<BeckhoffAds::SymInfo> symbols = ads.getSymbols();
+
+	foreach(BeckhoffAds::SymInfo& sym, symbols)
+	{
+		printf("%s : %s (%i) [%x]\n", *sym.name, *sym.typeName, sym.type, sym.flags);
+	}
+
 	printf("State %i dev %i\n", state.state, state.deviceState);
 
 	String name = ads.readValue("plc1.name", 80);

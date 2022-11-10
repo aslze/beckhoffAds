@@ -58,8 +58,8 @@ enum AdsIndexGroup
 	ADSIGRP_VERSION = 0xF008,
 	ADSIGRP_INFOBYNAMEEX = 0xF009,
 	ADSIGRP_DOWNLOAD = 0xF00A,
-	ADSIGRP_UPLOAD = 0xF00B,
-	ADSIGRP_UPLOADINFO = 0xF00C
+	ADSIGRP_SYM_UPLOAD = 0xF00B,
+	ADSIGRP_SYM_UPLOADINFO = 0xF00C
 };
 
 asl::Map<int, asl::String> adsErrors = String("6:Port not found,"
@@ -251,7 +251,7 @@ void BeckhoffAds::processNotification(const ByteArray& data)
 	StreamBufferReader buffer(data);
 	uint32_t           length = 0, stamps = 0;
 	buffer >> length >> stamps;
-	
+
 	for (unsigned i = 0; i < stamps; i++)
 	{
 		if (buffer.length() < 12)
@@ -260,7 +260,7 @@ void BeckhoffAds::processNotification(const ByteArray& data)
 		uint32_t samples = 0;
 		buffer >> time >> samples;
 		Date t = time * 100e-9 - 11644473600.0;
-		
+
 		for (unsigned j = 0; j < samples; j++)
 		{
 			if (buffer.length() < 8)
@@ -352,6 +352,7 @@ ByteArray BeckhoffAds::readPacket()
 	case ADSCOM_WRITE:
 	case ADSCOM_ADDDEVICENOTIF:
 	case ADSCOM_DELDEVICENOTIF:
+	case ADSCOM_READDEVICEINFO:
 		_response = data.clone();
 		_responses[pack(commandId, invokeId)] = _response;
 		_sem.post();
@@ -441,7 +442,7 @@ ByteArray BeckhoffAds::read(unsigned group, unsigned offset, int length)
 	StreamBufferReader reader(response);
 	uint32_t           error, len;
 	reader >> error >> len;
-	if (error != 0 || len > 1000)
+	if (error != 0 || len > 60000)
 	{
 		printf("ADS: read error (%u) %s\n", error, *adsErrors[error]);
 		_adsError = error;
@@ -614,6 +615,81 @@ BeckhoffAds::State BeckhoffAds::getState()
 	state.deviceState = devstate;
 	state.invalid = false;
 	return state;
+}
+
+BeckhoffAds::DevInfo BeckhoffAds::getInfo()
+{
+	DevInfo info = { 0, 0, 0 };
+	Lock    _(_cmdMutex);
+
+	if (!send(ADSCOM_READDEVICEINFO, ByteArray()))
+		return info;
+	ByteArray response = getResponse();
+	if (!response || response.length() != 24)
+	{
+		printf("ADS: Cannot read device info\n");
+		return info;
+	}
+	StreamBufferReader reader(response);
+	uint32_t           error;
+	byte               major, minor;
+	uint16_t           build;
+	reader >> error >> major >> minor >> build;
+	ByteArray name = reader.read(16);
+	if (error != 0)
+	{
+		printf("ADS: getInfo error %u\n", error);
+		return info;
+	}
+
+	info.minor = minor;
+	info.major = major;
+	info.build = build;
+	info.name = name;
+	return info;
+}
+
+asl::Array<BeckhoffAds::SymInfo> BeckhoffAds::getSymbols()
+{
+	Array<BeckhoffAds::SymInfo> info;
+
+	ByteArray data = read(ADSIGRP_SYM_UPLOADINFO, 0, 8);
+
+	if (data.length() < 8)
+		return info;
+
+	StreamBufferReader reader(data);
+	uint32_t           syms, size;
+	reader >> syms >> size;
+
+	data = read(ADSIGRP_SYM_UPLOAD, 0, size);
+
+	if (data.length() < int(size))
+		return info;
+
+	reader = StreamBufferReader(data);
+	uint32_t len, group, offset, dtype, flags;
+	uint16_t namelen, typelen, comlen;
+
+	for (int i = 0; i < int(syms); i++)
+	{
+		BeckhoffAds::SymInfo sym;
+		const byte*          p = reader.ptr();
+		reader >> len >> group >> offset >> size >> dtype >> flags >> namelen >> typelen >> comlen;
+		sym.name = reader.read(namelen);
+		reader.skip(1);
+		sym.typeName = reader.read(typelen);
+		reader.skip(1);
+		String com = reader.read(comlen);
+		reader.skip(len - int(reader.ptr() - p));
+		sym.type = dtype;
+		sym.flags = flags;
+
+		info << sym;
+		// printf("%s : %s (%i) [%x]\n", *sym.name, *sym.typeName, sym.type, sym.flags);
+	}
+
+	return info;
 }
 
 ByteArray BeckhoffAds::readValue(const asl::String& name, int n, bool exact)
