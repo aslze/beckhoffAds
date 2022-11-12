@@ -9,58 +9,58 @@ void onInsideChanged(bool b)
 
 int main()
 {
-	BeckhoffAds ads;
+	BeckhoffAds plc;
 
-	if (!ads.connect("127.0.0.1", 852))
+	if (!plc.connect("127.0.0.1", 852))
 	{
 		return 1;
 	}
 
-	BeckhoffAds::State state = ads.getState();
+	BeckhoffAds::State state = plc.getState();
 
-	if (state.invalid || ads.hasFatalError())
+	if (state.invalid || plc.hasFatalError())
 	{
-		printf("ADS error %i\n", ads.lastError());
+		printf("ADS error %i\n", plc.lastError());
 		return 0;
 	}
 
-	BeckhoffAds::DevInfo info = ads.getInfo();
+	BeckhoffAds::DevInfo info = plc.getInfo();
 
 	printf("Version: %i.%i.%i\nDevice name: '%s'\n", info.major, info.minor, info.build, *info.name);
 
-	Array<BeckhoffAds::SymInfo> symbols = ads.getSymbols();
+	Array<BeckhoffAds::SymInfo> symbols = plc.getSymbols();
 
-	foreach(BeckhoffAds::SymInfo& sym, symbols)
+	foreach (BeckhoffAds::SymInfo& sym, symbols)
 	{
-		printf("%s : %s (%i) [%x]\n", *sym.name, *sym.typeName, sym.type, sym.flags);
+		printf("%s : %s\n", *sym.name, *sym.type);
 	}
 
 	printf("State %i dev %i\n", state.state, state.deviceState);
 
-	String name = ads.readValue("plc1.name", 80);
+	String name = plc.readValue("plc1.name", 80);
 
 	printf("name = '%s'\n", *name);
 
-	ads.writeValue<int>("plc1.count", 0);
-	ads.writeValue<float>("plc1.speed", 12.345f);
-	ads.writeValue<float>("plc1.factor", -3.0f);
+	plc.writeValue<int>("plc1.count", 0);
+	plc.writeValue<float>("plc1.speed", 12.345f);
+	plc.writeValue<float>("plc1.factor", -3.0f);
 
-	ads.writeValue<bool>("plc1.flag", true);
+	plc.writeValue<bool>("plc1.flag", true);
 
 #ifdef ASL_HAVE_LAMBDA
 
-	ads.onChange<int>("plc1.count", [&](int value) {
+	plc.onChange<int>("plc1.count", [&](int value) {
 		if (value > 1000)
-			ads.writeValue<int>("plc1.count", 0);
+			plc.writeValue<int>("plc1.count", 0);
 	});
 
-	ads.onChange<bool>("plc1.inside", [&](bool value) {
+	plc.onChange<bool>("plc1.inside", [&](bool value) {
 		printf("-> %s\n", value ? "inside" : "out");
-		ads.writeValue<float>("plc1.factor", value ? 3.0f : -1.5f);
+		plc.writeValue<float>("plc1.factor", value ? 3.0f : -1.5f);
 	});
 
 #else
-	ads.onChange<bool>("plc1.inside", &onInsideChanged);
+	plc.onChange<bool>("plc1.inside", &onInsideChanged);
 #endif
 
 	double t1 = now();
@@ -69,21 +69,22 @@ int main()
 	{
 		if (now() - t1 > 1000)
 			break;
-		float speed = ads.readValue<float>("plc1.speed");
-		int count = ads.readValue<int>("plc1.count");
-		bool  inside = ads.readValue<bool>("plc1.inside");
-		bool  flag = ads.readValue<bool>("plc1.flag");
+
+		float speed = plc.readValue<float>("plc1.speed");
+		int   count = plc.readValue<int>("plc1.count");
+		bool  inside = plc.readValue<bool>("plc1.inside");
+		bool  flag = plc.readValue<bool>("plc1.flag");
 
 		printf("v = %f c = %i (%i, %i)\n", speed, count, inside, flag);
 
 		sleep(0.2);
 
-		if (ads.hasFatalError())
+		if (plc.hasFatalError())
 		{
 			printf("ADS Error after %.2f s\n", now() - t1);
 			break;
 		}
 	}
 
-	ads.writeValue<short>("plc1.count", 0);
+	plc.writeValue<short>("plc1.count", 0);
 }

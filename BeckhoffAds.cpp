@@ -59,7 +59,10 @@ enum AdsIndexGroup
 	ADSIGRP_INFOBYNAMEEX = 0xF009,
 	ADSIGRP_DOWNLOAD = 0xF00A,
 	ADSIGRP_SYM_UPLOAD = 0xF00B,
-	ADSIGRP_SYM_UPLOADINFO = 0xF00C
+	ADSIGRP_SYM_UPLOADINFO = 0xF00C,
+	ADSIGRP_DEVICE_DATA = 0xF100,
+	ADSIOFFS_DEVDATA_ADSSTATE = 0,
+	ADSIOFFS_DEVDATA_DEVSTATE = 2,
 };
 
 asl::Map<int, asl::String> adsErrors = String("6:Port not found,"
@@ -88,6 +91,11 @@ void BeckhoffAds::NetId::set(const asl::String& s)
 	}
 	for (int i = 0; i < 6; i++)
 		data[i] = (byte)(int)parts[i];
+}
+
+String BeckhoffAds::NetId::toString() const
+{
+	return data.join('.');
 }
 
 struct BeckhoffThread : public asl::Thread
@@ -487,11 +495,11 @@ ByteArray BeckhoffAds::readWrite(unsigned group, unsigned offset, int length, co
 
 inline uint32_t toBTime(double t)
 {
-	return uint32_t(t / 100e-9); // for 100ns)
+	return uint32_t(t / 100e-9); // for 100ns
 }
 
-unsigned BeckhoffAds::addNotification(unsigned group, unsigned offset, int length, NotificationMode mode, double maxt,
-                                      double cycle, Function<void, const ByteArray&> f)
+BeckhoffAds::Handle BeckhoffAds::addNotification(unsigned group, unsigned offset, int length, NotificationMode mode,
+                                                 double maxt, double cycle, Function<void, const ByteArray&> f)
 {
 	StreamBuffer buffer(ENDIAN_LITTLE);
 	buffer << (uint32_t)group << (uint32_t)offset << (uint32_t)length;
@@ -506,7 +514,7 @@ unsigned BeckhoffAds::addNotification(unsigned group, unsigned offset, int lengt
 	ByteArray response = getResponse();
 	if (!response)
 	{
-		return 0;
+		return Handle();
 	}
 	StreamBufferReader reader(response);
 	uint32_t           error, handle;
@@ -515,7 +523,7 @@ unsigned BeckhoffAds::addNotification(unsigned group, unsigned offset, int lengt
 	{
 		printf("ADS: addNotification error: (%u) %s\n", error, *adsErrors[error]);
 		_adsError = error;
-		return 0;
+		return Handle();
 	}
 
 	_callbacks[handle] = f;
@@ -523,35 +531,35 @@ unsigned BeckhoffAds::addNotification(unsigned group, unsigned offset, int lengt
 	return handle;
 }
 
-unsigned BeckhoffAds::addNotificationH(unsigned handle, int length, NotificationMode mode, double maxt, double cycle,
-                                       Function<void, const ByteArray&> f)
+BeckhoffAds::Handle BeckhoffAds::addNotification(BeckhoffAds::Handle handle, int length, NotificationMode mode,
+                                                 double maxt, double cycle, Function<void, const ByteArray&> f)
 {
-	return addNotification(ADSIGRP_VALBYHND, handle, length, mode, maxt, cycle, f);
+	return addNotification(ADSIGRP_VALBYHND, handle.h, length, mode, maxt, cycle, f);
 }
 
-unsigned BeckhoffAds::addNotification(const asl::String& name, int length, NotificationMode mode, double maxt,
-                                      double cycle, Function<void, const ByteArray&> f)
+BeckhoffAds::Handle BeckhoffAds::addNotification(const asl::String& name, int length, NotificationMode mode, double maxt,
+                                                 double cycle, Function<void, const ByteArray&> f)
 {
-	unsigned handle = getHandle(name);
+	BeckhoffAds::Handle handle = getHandle(name);
 	if (!handle)
-		return 0;
-	_handles << handle;
-	return addNotificationH(handle, length, mode, maxt, cycle, f);
+		return handle;
+	_handles << handle.h;
+	return addNotification(handle, length, mode, maxt, cycle, f);
 }
 
-unsigned BeckhoffAds::removeNotification(unsigned handle)
+bool BeckhoffAds::removeNotification(BeckhoffAds::Handle handle)
 {
 	StreamBuffer buffer(ENDIAN_LITTLE);
-	buffer << (uint32_t)handle;
+	buffer << (uint32_t)handle.h;
 
 	Lock _(_cmdMutex);
 
 	if (!send(ADSCOM_DELDEVICENOTIF, buffer))
-		return 0;
+		return false;
 
 	ByteArray response = getResponse();
 	if (!response)
-		return 0;
+		return false;
 
 	StreamBufferReader reader(response);
 	uint32_t           error;
@@ -559,32 +567,32 @@ unsigned BeckhoffAds::removeNotification(unsigned handle)
 	if (error != 0)
 	{
 		printf("ADS: removeNotification error (%u) %s\n", error, *adsErrors[error]);
-		return 0;
+		return false;
 	}
 
-	_callbacks.remove(handle);
+	_callbacks.remove(handle.h);
 
-	return handle;
+	return true;
 }
 
-unsigned BeckhoffAds::getHandle(const asl::String& name)
+BeckhoffAds::Handle BeckhoffAds::getHandle(const asl::String& name)
 {
 	ByteArray response = readWrite(ADSIGRP_HNDBYNAME, 0, 4, ByteArray((byte*)*name, name.length() + 1));
 	if (response.length() != 4)
 	{
 		printf("ADS: cannot get handle of %s\n", *name);
-		return 0;
+		return Handle();
 	}
 	return StreamBufferReader(response).read<unsigned>();
 }
 
-void BeckhoffAds::releaseHandle(unsigned handle)
+void BeckhoffAds::releaseHandle(BeckhoffAds::Handle handle)
 {
-	ByteArray data((byte*)&handle, sizeof(handle)); // assuming LE
-	bool      ok = write(ADSIGRP_RELEASEHND, 0, data);
-	if (!ok)
+	StreamBuffer buffer(ENDIAN_LITTLE);
+	buffer << (uint32_t)handle.h;
+	if (!write(ADSIGRP_RELEASEHND, 0, buffer))
 	{
-		printf("ADS: cannot release handle %u\n", handle);
+		printf("ADS: cannot release handle %u\n", handle.h);
 	}
 }
 
@@ -649,7 +657,7 @@ BeckhoffAds::DevInfo BeckhoffAds::getInfo()
 	return info;
 }
 
-asl::Array<BeckhoffAds::SymInfo> BeckhoffAds::getSymbols()
+Array<BeckhoffAds::SymInfo> BeckhoffAds::getSymbols()
 {
 	Array<BeckhoffAds::SymInfo> info;
 
@@ -678,15 +686,14 @@ asl::Array<BeckhoffAds::SymInfo> BeckhoffAds::getSymbols()
 		reader >> len >> group >> offset >> size >> dtype >> flags >> namelen >> typelen >> comlen;
 		sym.name = reader.read(namelen);
 		reader.skip(1);
-		sym.typeName = reader.read(typelen);
+		sym.type = reader.read(typelen);
 		reader.skip(1);
 		String com = reader.read(comlen);
 		reader.skip(len - int(reader.ptr() - p));
-		sym.type = dtype;
+		sym.typecode = dtype;
 		sym.flags = flags;
 
 		info << sym;
-		// printf("%s : %s (%i) [%x]\n", *sym.name, *sym.typeName, sym.type, sym.flags);
 	}
 
 	return info;
@@ -703,9 +710,9 @@ ByteArray BeckhoffAds::readValue(const asl::String& name, int n, bool exact)
 	return response;
 }
 
-ByteArray BeckhoffAds::readValueH(unsigned handle, int n, bool exact)
+ByteArray BeckhoffAds::readValue(BeckhoffAds::Handle handle, int n, bool exact)
 {
-	ByteArray response = read(ADSIGRP_VALBYHND, handle, n);
+	ByteArray response = read(ADSIGRP_VALBYHND, handle.h, n);
 	if (response.length() > n || exact && response.length() != n)
 	{
 		printf("ADS: cannot read value by handle\n");
@@ -716,8 +723,8 @@ ByteArray BeckhoffAds::readValueH(unsigned handle, int n, bool exact)
 
 bool BeckhoffAds::writeValue(const asl::String& name, const ByteArray& data)
 {
-	unsigned handle = getHandle(name);
-	if (_adsError != 0 || _lastError != 0)
+	BeckhoffAds::Handle handle = getHandle(name);
+	if (!handle)
 		return false;
-	return write(ADSIGRP_VALBYHND, handle, data);
+	return write(ADSIGRP_VALBYHND, handle.h, data);
 }

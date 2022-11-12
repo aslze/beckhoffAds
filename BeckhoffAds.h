@@ -35,9 +35,18 @@ public:
 	struct SymInfo
 	{
 		asl::String name;
-		asl::String typeName;
-		int         type;
+		asl::String type;
+		int         typecode;
 		unsigned    flags;
+	};
+
+	struct Handle
+	{
+		unsigned h;
+		bool     ok;
+		Handle() : h(0), ok(false) {}
+		Handle(unsigned h) : h(h), ok(true) {}
+		bool operator!() const { return !ok; }
 	};
 
 	struct NetId
@@ -47,8 +56,9 @@ public:
 		NetId() : data(6, 0) {}
 		NetId(const char* s) : data(6, 0) { set(s); }
 		NetId(const asl::String& s) : data(6, 0) { set(s); }
-		void set(const asl::String& s);
-		bool operator!() const { return data == asl::ByteArray(6, 0); }
+		void        set(const asl::String& s);
+		bool        operator!() const { return data == asl::ByteArray(6, 0); }
+		asl::String toString() const;
 	};
 
 	enum NotificationMode
@@ -61,7 +71,8 @@ public:
 	~BeckhoffAds();
 
 	/**
-	Connects to an ADS device at the given host via TCP/IP and given ADS port (default 851)
+	Connects to an ADS device at the given host via TCP/IP and given ADS port (default 851); it target NetID not set it
+	will use the host's IP + ".1.1".
 	*/
 	bool connect(const asl::String& host, int adsPort = -1);
 
@@ -70,15 +81,32 @@ public:
 	*/
 	void disconnect();
 
+	bool connected() const { return _connected; }
+
 	/**
-	Sets the NetID and port of the source for communications
+	Sets the NetID and port of the source for communications (set before connect)
 	*/
 	void setSource(const NetId& net, int port);
 
 	/**
-	Sets the NetID and port of the target for communications
+	Sets the NetID and port of the target for communications (set before connect)
 	*/
 	void setTarget(const NetId& net, int port);
+
+	/**
+	Gets the state of the ADS server and device
+	*/
+	State getState();
+
+	/**
+	Gets device information including version and device name
+	*/
+	DevInfo getInfo();
+
+	/**
+	Gets the list of symbols (variable names) in the device, with their types
+	*/
+	asl::Array<BeckhoffAds::SymInfo> getSymbols();
 
 	/**
 	Writes data to a given index group and offset
@@ -98,50 +126,40 @@ public:
 	/**
 	Enables notifications for an index group and offset and returns a handle, times are in seconds
 	*/
-	unsigned addNotification(unsigned group, unsigned offset, int length, NotificationMode mode, double maxt,
-	                         double cycle, asl::Function<void, const asl::ByteArray&> f);
+	Handle addNotification(unsigned group, unsigned offset, int length, NotificationMode mode, double maxt, double cycle,
+	                       asl::Function<void, const asl::ByteArray&> f);
 
 	/**
 	Enables notifications for a variable given its handle and returns a notification handle, times are in seconds
 	*/
-	unsigned addNotificationH(unsigned handle, int length, NotificationMode mode, double maxt, double cycle,
-	                          asl::Function<void, const asl::ByteArray&> f);
+	Handle addNotification(Handle handle, int length, NotificationMode mode, double maxt, double cycle,
+	                       asl::Function<void, const asl::ByteArray&> f);
 
 	/**
 	Enables notifications for a variable given its name and returns a notification handle, times are in seconds
 	*/
-	unsigned addNotification(const asl::String& name, int length, NotificationMode mode, double maxt, double cycle,
-	                         asl::Function<void, const asl::ByteArray&> f);
+	Handle addNotification(const asl::String& name, int length, NotificationMode mode, double maxt, double cycle,
+	                       asl::Function<void, const asl::ByteArray&> f);
 
 	/**
 	Disables notifications for previously returned notification handle
 	*/
-	unsigned removeNotification(unsigned handle);
+	bool removeNotification(Handle handle);
 
 	/**
 	Gets the handle associated to a variable name
 	*/
-	unsigned getHandle(const asl::String& name);
+	Handle getHandle(const asl::String& name);
 
 	/**
 	Releases a handle
 	*/
-	void releaseHandle(unsigned handle);
+	void releaseHandle(Handle handle);
 
 	/**
-	Gets the state of the ADS server and device
+	Reads a variable given a handle as data
 	*/
-	State getState();
-
-	/**
-	Gets device information including version and device name
-	*/
-	DevInfo getInfo();
-
-	/**
-	Gets the list of symbols (variables) in the device, with their types
-	*/
-	asl::Array<BeckhoffAds::SymInfo> getSymbols();
+	asl::ByteArray readValue(Handle handle, int n, bool exact = false);
 
 	/**
 	Reads a named variable as data
@@ -154,17 +172,12 @@ public:
 	bool writeValue(const asl::String& name, const asl::ByteArray& data);
 
 	/**
-	Reads a variable given a handle as data
-	*/
-	asl::ByteArray readValueH(unsigned handle, int n, bool exact = false);
-
-	/**
 	Reads a variable given a handle as a specific type
 	*/
 	template<class T>
-	T readValueH(unsigned handle)
+	T readValue(Handle handle)
 	{
-		asl::ByteArray response = readValueH(handle, sizeof(T), true);
+		asl::ByteArray response = readValue(handle, sizeof(T), true);
 		if (!response)
 			return T();
 		return asl::StreamBufferReader(response).read<T>();
@@ -192,8 +205,8 @@ public:
 	}
 
 	template<class T>
-	unsigned addNotification(const asl::String& name, NotificationMode mode, double maxt, double cycle,
-	                         const asl::Function<void, T>& f)
+	Handle addNotification(const asl::String& name, NotificationMode mode, double maxt, double cycle,
+	                       const asl::Function<void, T>& f)
 	{
 		struct NotFunctor
 		{
@@ -209,11 +222,10 @@ public:
 	 * \param name variable name
 	 * \param f functor to be called with the new value
 	 * \param interval variable checked internally every t seconds
-	 * \param maxt events accumulate up to maxt seconds and are sent together (apparently)
+	 * \param maxt max delay (?)
 	 */
 	template<class T>
-	unsigned onChange(const asl::String& name, const asl::Function<void, T>& f, double interval = 0.01,
-	                  double maxt = 0.01)
+	Handle onChange(const asl::String& name, const asl::Function<void, T>& f, double interval = 0.01, double maxt = 0.01)
 	{
 		return addNotification(name, NOTIF_CHANGE, maxt, interval, f);
 	}
@@ -238,15 +250,7 @@ protected:
 	void           processNotification(const asl::ByteArray& data);
 	bool           checkConnection();
 	void           receiveLoop();
-
-	/**
-	Sends an ADS  packet with the given command ID and data
-	*/
-	bool send(int command, const asl::ByteArray& data);
-
-	/**
-	Reads an incoming ADS packet
-	*/
+	bool           send(int command, const asl::ByteArray& data);
 	asl::ByteArray readPacket();
 
 protected:
@@ -265,7 +269,6 @@ protected:
 	int                                                            _adsError;
 	asl::Array<unsigned>                                           _handles;
 	asl::Array<unsigned>                                           _notifications;
-	asl::Dic<unsigned>                                             _namedHandles;
 	asl::Map<asl::ULong, asl::ByteArray>                           _responses;
 	asl::ByteArray                                                 _response;
 	BeckhoffThread*                                                _thread;
