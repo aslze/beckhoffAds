@@ -109,6 +109,11 @@ public:
 	asl::Array<BeckhoffAds::SymInfo> getSymbols();
 
 	/**
+	Writes ADS and device status
+	*/
+	bool writeControl(State state, const asl::ByteArray& data = asl::ByteArray());
+
+	/**
 	Writes data to a given index group and offset
 	*/
 	bool write(unsigned group, unsigned offset, const asl::ByteArray& data);

@@ -68,6 +68,7 @@ enum AdsIndexGroup
 asl::Map<int, asl::String> adsErrors = String("6:Port not found,"
                                               "7:Target not found,"
                                               "18:Port disabled,"
+                                              "1793:Service not supported,"
                                               "1827:Access denied,"
                                               "1810:Invalid state,"
                                               "1803:Invalid parameters,"
@@ -361,6 +362,7 @@ ByteArray BeckhoffAds::readPacket()
 	case ADSCOM_ADDDEVICENOTIF:
 	case ADSCOM_DELDEVICENOTIF:
 	case ADSCOM_READDEVICEINFO:
+	case ADSCOM_WRITECTRL:
 		_response = data.clone();
 		_responses[pack(commandId, invokeId)] = _response;
 		_sem.post();
@@ -427,7 +429,7 @@ bool BeckhoffAds::write(unsigned group, unsigned offset, const ByteArray& data)
 	reader >> error;
 	if (error != 0)
 	{
-		printf("ADS: write: bad response (%u) %s\n", error, *adsErrors[error]);
+		printf("ADS: write error (%u) %s\n", error, *adsErrors[error]);
 		return false;
 	}
 	return true;
@@ -697,6 +699,32 @@ Array<BeckhoffAds::SymInfo> BeckhoffAds::getSymbols()
 	}
 
 	return info;
+}
+
+bool BeckhoffAds::writeControl(BeckhoffAds::State state, const asl::ByteArray& data)
+{
+	StreamBuffer buffer(ENDIAN_LITTLE);
+	buffer << (uint16_t)state.state << (uint16_t)state.deviceState << (uint32_t)data.length() << data;
+
+	Lock _(_cmdMutex);
+
+	if (!send(ADSCOM_WRITECTRL, buffer))
+		return false;
+
+	ByteArray response = getResponse();
+
+	if (!response)
+		return false;
+
+	StreamBufferReader reader(response);
+	uint32_t           error;
+	reader >> error;
+	if (error != 0)
+	{
+		printf("ADS: control error (%u) %s\n", error, *adsErrors[error]);
+		return false;
+	}
+	return true;
 }
 
 ByteArray BeckhoffAds::readValue(const asl::String& name, int n, bool exact)
