@@ -16,8 +16,6 @@ if(NOT TARGET asls)
 	endif()
 endif()
 
-set(CMAKE_DEBUG_POSTFIX "d")
-
 set(SRC
 	BeckhoffAds.h
 	BeckhoffAds.cpp

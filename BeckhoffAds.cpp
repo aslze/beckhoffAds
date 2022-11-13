@@ -1,4 +1,5 @@
 // Copyright(c) 2019-2022 aslze
+// Licensed under the MIT License (http://opensource.org/licenses/MIT)
 
 // https://infosys.beckhoff.com/
 
@@ -69,6 +70,7 @@ asl::Map<int, asl::String> adsErrors = String("6:Port not found,"
                                               "7:Target not found,"
                                               "18:Port disabled,"
                                               "1793:Service not supported,"
+                                              "1797:Bad size,"
                                               "1827:Access denied,"
                                               "1810:Invalid state,"
                                               "1803:Invalid parameters,"
@@ -252,7 +254,7 @@ void BeckhoffAds::receiveLoop()
 			ByteArray data = readPacket();
 		}
 	}
-	_sem.post();
+	_newdata.post();
 }
 
 void BeckhoffAds::processNotification(const ByteArray& data)
@@ -313,7 +315,7 @@ ByteArray BeckhoffAds::readPacket()
 	{
 		printf("ADS: bad comm (len=%i reserved=%i, read=%i)\n", totalLen, reserved, data.length());
 		_lastError = -4;
-		_sem.post();
+		_newdata.post();
 		return data.resize(0);
 	}
 	data = _socket.read(totalLen);
@@ -336,7 +338,7 @@ ByteArray BeckhoffAds::readPacket()
 	{
 		_adsError = error;
 		printf("ADS: error: (%u) %s\n", error, *adsErrors[error]);
-		_sem.post();
+		_newdata.post();
 		return data.resize(0); // 8?
 	}
 
@@ -365,7 +367,7 @@ ByteArray BeckhoffAds::readPacket()
 	case ADSCOM_WRITECTRL:
 		_response = data.clone();
 		_responses[pack(commandId, invokeId)] = _response;
-		_sem.post();
+		_newdata.post();
 		break;
 	default:;
 	}
@@ -386,7 +388,7 @@ ByteArray BeckhoffAds::getResponse()
 {
 	for (int i = 0; i < 5; i++)
 	{
-		_sem.wait();
+		_newdata.wait();
 		Lock _(_mutex);
 		if (_adsError != 0)
 			return ByteArray();
@@ -749,10 +751,7 @@ ByteArray BeckhoffAds::readValue(BeckhoffAds::Handle handle, int n, bool exact)
 	return response;
 }
 
-bool BeckhoffAds::writeValue(const asl::String& name, const ByteArray& data)
+bool BeckhoffAds::writeValue(const BeckhoffAds::Handle& handle, const asl::ByteArray& data)
 {
-	BeckhoffAds::Handle handle = getHandle(name);
-	if (!handle)
-		return false;
 	return write(ADSIGRP_VALBYHND, handle.h, data);
 }
