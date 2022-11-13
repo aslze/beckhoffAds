@@ -175,7 +175,7 @@ public:
 	/**
 	 * Writes a variable by handle as data
 	 */
-	bool writeValue(const Handle& name, const asl::ByteArray& data);
+	bool writeValue(const Handle& h, const asl::ByteArray& data);
 
 	/**
 	 * Writes a named variable as data
@@ -187,16 +187,30 @@ public:
 	}
 
 	/**
-	 * Reads a variable given a handle as a specific type
+	 * Writes a string variable by handle
 	 */
-	template<class T>
-	T readValueH(Handle handle)
+	bool writeString(const Handle& h, const asl::String& value)
 	{
-		asl::ByteArray response = readValue(handle, sizeof(T), true);
-		if (!response)
-			return T();
-		return asl::StreamBufferReader(response).read<T>();
+		return writeValue(h, asl::ByteArray((asl::byte*)*value, value.length() + 1));
 	}
+
+	/**
+	 * Writes a string variable by name
+	 */
+	bool writeString(const asl::String& name, const asl::String& value)
+	{
+		return writeValue(name, asl::ByteArray((asl::byte*)*value, value.length() + 1));
+	}
+
+	/**
+	 * Reads a string variable given a handle
+	 */
+	asl::String readString(const Handle& h, int n = 80) { return asl::String(readValue(h, n)).fix(); }
+
+	/**
+	 * Reads a string variable by name
+	 */
+	asl::String readString(const asl::String& name, int n = 80) { return asl::String(readValue(name, n)).fix(); }
 
 	/**
 	 * Reads a named variable as a specific type
